@@ -1,0 +1,10 @@
+#python version 3.10
+ncnn==1.0.20260526
+onnxruntime==1.23.2
+opencv-contrib-python==4.10.0.84
+opencv-python==5.0.0.93
+paddleocr==3.7.0
+paddlepaddle==3.2.2
+paddlex==3.7.2
+supervision==0.30.9
+ultralytics==8.4.177

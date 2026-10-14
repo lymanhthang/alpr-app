@@ -1,0 +1,13 @@
+# Thư mục dữ liệu kiểm tra và kết quả xuất ra
+test_data/
+outputs/
+
+# Python cache & environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+*.egg-info/
+.pytest_cache/
