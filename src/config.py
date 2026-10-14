@@ -34,7 +34,7 @@ class OCRConfig:
     rec_model_dir: Optional[str] = "models/ch_rec"
     use_angle_cls: bool = False
     min_confidence: float = 0.5
-    max_retry_per_track: int = 3
+    retry_interval_frames: int = 2  # Bỏ qua 2 frame tiếp theo nếu chưa đạt chuẩn biển số VN
 
 
 @dataclass
@@ -90,7 +90,7 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             rec_model_dir=ocr_data.get("rec_model_dir"),
             use_angle_cls=bool(ocr_data.get("use_angle_cls", False)),
             min_confidence=float(ocr_data.get("min_confidence", 0.5)),
-            max_retry_per_track=int(ocr_data.get("max_retry_per_track", 3)),
+            retry_interval_frames=int(ocr_data.get("retry_interval_frames", 2)),
         ),
         output=OutputConfig(
             save_result=bool(out_data.get("save_result", True)),

@@ -21,11 +21,11 @@ Hệ thống nhận diện biển số xe tự động (ALPR - Automatic License
 - 🔤 **PaddleOCR PP-OCRv6 Tiny (ONNX Runtime)**:
   - Nạp trực tiếp cặp mô hình cục bộ `PP-OCRv6_tiny_det` và `PP-OCRv6_tiny_rec` qua ONNX Runtime.
   - Tắt hoàn toàn các module nặng không cần thiết (như document unwarping hay full-page orientation) giúp OCR chạy siêu tốc.
-- 🧠 **Cơ Chế OCR Cache 1-Lần (One-Time OCR per Track)**:
-  - Mỗi xe (Track ID) chỉ chạy OCR **1 lần duy nhất**. Sau khi nhận diện thành công, kết quả được khóa vĩnh viễn vào bộ nhớ đệm (Cache).
-  - Tất cả các frame tiếp theo của xe này sẽ lấy thẳng biển số từ Cache, **tuyệt đối không tốn thêm tài nguyên OCR**.
-  - Có cơ chế thử lại thông minh (tối đa 3 lần) nếu frame đầu tiên xe ở quá xa hoặc bị mờ.
-- 🛡️ **Bộ Lọc Ký Tự Chuẩn Hóa**: Chỉ chấp nhận chữ in hoa `[A-Z]` và chữ số `[0-9]`, tự động xử lý và ghép dòng chuẩn cho cả biển số 1 dòng và biển vuông 2 dòng.
+- 🧠 **Cơ Chế OCR Cooldown & Khóa Cache Biển Số Việt Nam**:
+  - Khi xe mới xuất hiện, hệ thống chạy OCR ngay lập tức.
+  - Nếu kết quả đạt chuẩn biển số Việt Nam (`is_valid_vn_plate`), biển số được **khóa vĩnh viễn vào Cache**, các frame tiếp theo không tốn thêm tài nguyên OCR.
+  - Nếu chưa đạt chuẩn (xe ở xa, rung lắc hoặc mờ), hệ thống **bỏ qua không OCR trong 2 frame tiếp theo** (cooldown) rồi thử lại ở frame kế tiếp. Quá trình lặp lại cho đến khi nhận diện thành công hoặc xe rời khỏi khung hình.
+- 🛡️ **Bộ Lọc Ký Tự & Cấu Trúc Biển Số VN**: Chỉ chấp nhận ký tự in hoa `[A-Z0-9]`, chỉ vẽ lên khung hình đối với các biển số đạt cấu trúc chuẩn Việt Nam (`^[0-9]{2}[A-Z][A-Z0-9]?[0-9]{4,5}$`).
 - ⏱️ **Công Cụ Benchmark Tích Hợp**: Đo lường và báo cáo chi tiết thời gian load model, latency detector, latency OCR và tốc độ pipeline thực tế.
 
 ---
@@ -221,8 +221,7 @@ python main.py --source test_data/imgs/carlong_0004.png --benchmark
 |              | `lost_track_buffer`   | `30`                            | Số frame giữ track khi xe tạm thời bị che khuất   |
 | **ocr**      | `engine`              | `onnxruntime`                   | Backend suy luận OCR                              |
 |              | `det_model_dir`       | `models/ch_det`                 | Thư mục model text detection ONNX                 |
-|              | `rec_model_dir`       | `models/ch_rec`                 | Thư mục model text recognition ONNX               |
-|              | `max_retry_per_track` | `3`                             | Số lần thử lại tối đa cho 1 xe nếu ảnh ban đầu mờ |
+|              | `retry_interval_frames`| `2`                            | Số frame bỏ qua giữa các lần thử nếu chưa đạt chuẩn VN |
 | **output**   | `save_result`         | `true`                          | Tự động lưu video/ảnh kết quả                     |
 |              | `output_dir`          | `outputs`                       | Thư mục lưu kết quả                               |
 

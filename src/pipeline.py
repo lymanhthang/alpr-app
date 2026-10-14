@@ -41,10 +41,11 @@ class ALPRPipeline:
         print(f"[Pipeline] Warm-up hoàn tất trong {self.warmup_time_ms:.2f} ms.")
 
         # 3. Quản lý trạng thái và bộ nhớ đệm OCR (Cache)
-        self.ocr_cache: Dict[int, str] = {}           # {track_id: plate_text}
-        self.ocr_attempts: Dict[int, int] = {}        # {track_id: so_lan_thu}
+        self.ocr_cache: Dict[int, str] = {}           # {track_id: plate_text} chỉ lưu biển số VN hợp lệ
+        self.ocr_last_frame: Dict[int, int] = {}      # {track_id: frame_idx} thời điểm gần nhất chạy OCR
         self.ocr_calls_count: int = 0                 # Tổng số lần gọi OCR
         self.skip_frames: int = max(1, config.tracker.skip_frames)
+        self.retry_interval_frames: int = getattr(config.ocr, "retry_interval_frames", 2)
 
         # 4. Thống kê benchmark
         self.det_times: List[float] = []              # Thời gian mỗi lần chạy YOLO (ms)
@@ -109,49 +110,48 @@ class ALPRPipeline:
         h, w = frame.shape[:2]
 
         for track_id, box, conf in active_tracks:
-            # TRƯỜNG HỢP 1: Track ID này ĐÃ CÓ trong cache
+            # TRƯỜNG HỢP 1: Track ID này ĐÃ CÓ trong cache (đã nhận diện biển VN hợp lệ)
             if track_id in self.ocr_cache:
-                # Tuyệt đối không gọi OCR nữa, lấy thẳng kết quả từ cache
                 continue
 
-            # TRƯỜNG HỢP 2: Track ID MỚI (chưa có trong cache)
-            attempts = self.ocr_attempts.get(track_id, 0)
-            max_attempts = self.config.ocr.max_retry_per_track
+            # TRƯỜNG HỢP 2: Track ID chưa có biển số hợp lệ
+            # Kiểm tra thời điểm gọi OCR gần nhất của track này
+            last_ocr_f = self.ocr_last_frame.get(track_id, -999)
+            if (frame_idx - last_ocr_f) <= self.retry_interval_frames:
+                # Bỏ qua không OCR đối tượng này trong 2 frame tiếp theo
+                continue
 
-            if attempts < max_attempts:
-                # Cắt ảnh vùng biển số
-                x1, y1, x2, y2 = [int(v) for v in box]
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(w, x2), min(h, y2)
+            # Cắt ảnh vùng biển số khi lần đầu xuất hiện hoặc đã qua 2 frame tiếp theo
+            x1, y1, x2, y2 = [int(v) for v in box]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
 
-                if (x2 - x1) > 10 and (y2 - y1) > 10:
-                    plate_crop = frame[y1:y2, x1:x2]
+            if (x2 - x1) > 10 and (y2 - y1) > 10:
+                plate_crop = frame[y1:y2, x1:x2]
 
-                    # Chạy OCR (đo thời gian)
-                    self.ocr_calls_count += 1
-                    t_ocr = time.perf_counter()
-                    plate_text, score = self.ocr.recognize_plate(plate_crop)
-                    ocr_ms = (time.perf_counter() - t_ocr) * 1000
-                    self.ocr_times.append(ocr_ms)
-                    self.ocr_attempts[track_id] = attempts + 1
+                # Ghi nhận frame này đã chạy OCR cho track_id
+                self.ocr_last_frame[track_id] = frame_idx
+                self.ocr_calls_count += 1
+                t_ocr = time.perf_counter()
+                plate_text, score = self.ocr.recognize_plate(plate_crop)
+                ocr_ms = (time.perf_counter() - t_ocr) * 1000
+                self.ocr_times.append(ocr_ms)
 
-                    if plate_text:
-                        # Đã nhận diện thành công -> Khóa vĩnh viễn vào Cache
-                        self.ocr_cache[track_id] = plate_text
-                        print(
-                            f"[ALPR] Đã nhận diện biển số mới: "
-                            f"[Track #{track_id}] -> '{plate_text}' (conf: {score:.2f}) "
-                            f"ở frame {frame_idx} (OCR: {ocr_ms:.2f} ms)"
-                        )
-                    else:
-                        # Thử lại chưa thành công
-                        if self.ocr_attempts[track_id] >= max_attempts:
-                            # Đã hết số lần thử mà vẫn mờ -> gắn nhãn UNKNOWN để không thử nữa
-                            self.ocr_cache[track_id] = "UNKNOWN"
-                            print(
-                                f"[ALPR Warning] Track #{track_id} sau {max_attempts} lần "
-                                f"thử không nhận diện được chữ rõ ràng."
-                            )
+                if plate_text and self.ocr.is_valid_vn_plate(plate_text):
+                    # Đạt chuẩn biển số Việt Nam -> Khóa vĩnh viễn vào Cache
+                    self.ocr_cache[track_id] = plate_text
+                    print(
+                        f"[ALPR] Đã nhận diện biển số hợp lệ: "
+                        f"[Track #{track_id}] -> '{plate_text}' (conf: {score:.2f}) "
+                        f"ở frame {frame_idx} (OCR: {ocr_ms:.2f} ms)"
+                    )
+                else:
+                    # Chưa đạt chuẩn: không lưu cache, sẽ được bỏ qua trong 2 frame tiếp theo và tiếp tục thử lại
+                    raw_str = plate_text if plate_text else "None"
+                    print(
+                        f"[ALPR Info] Track #{track_id} (frame {frame_idx}): OCR ra '{raw_str}' "
+                        f"(chưa đạt chuẩn biển VN, sẽ thử lại sau {self.retry_interval_frames} frame)"
+                    )
 
         # 4. Vẽ kết quả lên ảnh
         annotated_frame = self.visualizer.draw(

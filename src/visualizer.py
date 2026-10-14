@@ -6,6 +6,8 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from src.ocr import PlateOCR
+
 
 class Visualizer:
     """Bộ trực quan hóa kết quả nhận diện và theo dõi biển số."""
@@ -26,7 +28,8 @@ class Visualizer:
         ocr_calls: int = 0,
     ) -> np.ndarray:
         """
-        Vẽ tất cả thông tin biển số lên frame ảnh.
+        Vẽ thông tin biển số lên frame ảnh.
+        Chỉ vẽ những đối tượng có biển số hợp lệ (valid_vn_plate).
 
         Args:
             frame: Ảnh BGR gốc.
@@ -44,24 +47,26 @@ class Visualizer:
             x2, y2 = min(w - 1, x2), min(h - 1, y2)
 
             plate_text = ocr_cache.get(track_id)
-            is_recognized = plate_text is not None and len(plate_text) > 0
+            is_valid = plate_text is not None and PlateOCR.is_valid_vn_plate(plate_text)
 
-            color = self.box_color if is_recognized else self.pending_color
-
-            # 1. Vẽ bounding box bo viền nổi bật
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness=2)
-
-            # 2. Tạo nội dung nhãn
-            if is_recognized:
+            if is_valid:
+                color = self.box_color
                 label = f"#{track_id}: {plate_text}"
             else:
-                label = f"#{track_id}: Đang đọc..."
+                color = self.pending_color
+                label = f"#{track_id}: UNKNOWN"
 
-            # 3. Vẽ badge nền chứa nhãn
+            # 1. Vẽ bounding box bo viền nổi bật (Xanh nếu hợp lệ, Cam nếu UNKNOWN)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness=2)
+
+            # 2. Vẽ badge nền chứa nhãn
             self._draw_label_badge(annotated, label, x1, y1, color)
 
-        # 4. Vẽ bảng thống kê thông tin ở góc trên bên trái
-        self._draw_info_panel(annotated, fps, len(tracks), len(ocr_cache), ocr_calls)
+        # 4. Vẽ bảng thống kê thông tin ở góc trên bên trái (chỉ đếm số biển valid)
+        valid_count = sum(
+            1 for text in ocr_cache.values() if PlateOCR.is_valid_vn_plate(text)
+        )
+        self._draw_info_panel(annotated, fps, len(tracks), valid_count, ocr_calls)
 
         return annotated
 
@@ -118,7 +123,7 @@ class Visualizer:
         """Vẽ panel hiển thị FPS và trạng thái hệ thống."""
         panel_text = (
             f"FPS: {fps:.1f} | Active: {active_tracks} | "
-            f"Cached Plates: {total_cached} | OCR Calls: {ocr_calls}"
+            f"Valid Plates: {total_cached} | OCR Calls: {ocr_calls}"
         )
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.5

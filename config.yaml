@@ -28,7 +28,7 @@ ocr:
   rec_model_dir: "models/ch_rec"
   use_angle_cls: false
   min_confidence: 0.5
-  max_retry_per_track: 3      # Số lần thử OCR tối đa nếu ảnh ban đầu mờ trước khi chốt
+  retry_interval_frames: 2    # Bỏ qua 2 frame tiếp theo giữa các lần thử nếu chưa đạt chuẩn VN
 
 # Cấu hình xuất kết quả & hiển thị
 output:

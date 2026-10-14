@@ -44,24 +44,17 @@ def main():
     print(f"  - Det: {det_name} ({det_dir})")
     print(f"  - Rec: {rec_name} ({rec_dir})")
 
-    try:
-        ocr = PaddleOCR(
-            text_detection_model_name=det_name,
-            text_detection_model_dir=det_dir,
-            text_recognition_model_name=rec_name,
-            text_recognition_model_dir=rec_dir,
-            lang="en",
-            engine="onnxruntime",
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-        )
-    except Exception as e1:
-        print(f"[Test PaddleOCR] Thử nạp bằng TextDetection & TextRecognition ({e1})...")
-        from paddleocr import TextDetection, TextRecognition
-        det_m = TextDetection(model_dir=det_dir, engine="onnxruntime")
-        rec_m = TextRecognition(model_dir=rec_dir, engine="onnxruntime")
-        ocr = None
+    ocr = PaddleOCR(
+        text_detection_model_name=det_name,
+        text_detection_model_dir=det_dir,
+        text_recognition_model_name=rec_name,
+        text_recognition_model_dir=rec_dir,
+        lang="en",
+        engine="onnxruntime",
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+    )
 
     print(f"\n[Test PaddleOCR] Đang đọc ảnh: {img_path}...")
     img = cv2.imread(str(img_path))
@@ -69,39 +62,11 @@ def main():
         print("[Lỗi] cv2 không thể đọc ảnh.")
         sys.exit(1)
 
-    print("[Test PaddleOCR] Đang chạy nhận diện...")
-    if ocr is not None:
-        if hasattr(ocr, "predict"):
-            results = ocr.predict(img)
-        else:
-            results = ocr.ocr(img)
-    else:
-        det_out = list(det_m.predict(img, batch_size=1))
-        results = []
-        if det_out:
-            polys = det_out[0].get("dt_polys", [])
-            h_img, w_img = img.shape[:2]
-            rec_texts = []
-            rec_scores = []
-            rec_polys = []
-            for poly in polys:
-                box = np.array(poly).astype(int)
-                x1, y1 = max(0, np.min(box[:, 0])), max(0, np.min(box[:, 1]))
-                x2, y2 = min(w_img, np.max(box[:, 0])), min(h_img, np.max(box[:, 1]))
-                if (x2 - x1) > 5 and (y2 - y1) > 5:
-                    crop = img[y1:y2, x1:x2]
-                    rec_out = list(rec_m.predict(crop, batch_size=1))
-                    if rec_out:
-                        t = rec_out[0].get("rec_text", "")
-                        sc = rec_out[0].get("rec_score", 1.0)
-                        if t:
-                            rec_texts.append(t)
-                            rec_scores.append(sc)
-                            rec_polys.append(poly)
-            results = [{"rec_texts": rec_texts, "rec_scores": rec_scores, "dt_polys": rec_polys}]
+    print("[Test PaddleOCR] Đang chạy nhận diện PP-OCRv6 predict...")
+    results = ocr.predict(img)
 
     print("\n" + "=" * 50)
-    print("KẾT QUẢ NHẬN DIỆN TỪ PADDLEOCR:")
+    print("KẾT QUẢ NHẬN DIỆN TỪ PADDLEOCR PP-OCRv6:")
     print("=" * 50)
 
     found = False
@@ -110,36 +75,26 @@ def main():
             if item is None:
                 continue
 
-            # Format PaddleOCR 3.x
-            if hasattr(item, "get") or hasattr(item, "__getitem__"):
-                try:
-                    texts = item.get("rec_texts", [])
-                    scores = item.get("rec_scores", [])
-                    polys = item.get("dt_polys", item.get("rec_polys", []))
-                    for i, t in enumerate(texts):
-                        clean_t = re.sub(r"[^A-Z0-9]", "", str(t).upper())
-                        if not clean_t:
-                            continue
-                        sc = scores[i] if i < len(scores) else 1.0
-                        bx = polys[i] if i < len(polys) else []
-                        print(f"Text (A-Z, 0-9): {clean_t:<12} (Gốc: {t:<10}) | Confidence: {float(sc):.2f} | BBox: {bx}")
-                        found = True
-                    continue
-                except Exception:
-                    pass
+            # Format PP-OCRv6 / PaddleOCR 3.x
+            texts = item.get("rec_texts", []) if hasattr(item, "get") else getattr(item, "rec_texts", [])
+            scores = item.get("rec_scores", []) if hasattr(item, "get") else getattr(item, "rec_scores", [])
+            polys = item.get("dt_polys", item.get("rec_polys", [])) if hasattr(item, "get") else getattr(item, "dt_polys", getattr(item, "rec_polys", []))
 
-            # Format PaddleOCR 2.x
-            if isinstance(item, (list, tuple)):
-                for line in item:
-                    if not line or len(line) < 2:
-                        continue
-                    bbox = line[0]
-                    text, score = line[1]
-                    clean_t = re.sub(r"[^A-Z0-9]", "", str(text).upper())
-                    if not clean_t:
-                        continue
-                    print(f"Text (A-Z, 0-9): {clean_t:<12} (Gốc: {text:<10}) | Confidence: {float(score):.2f} | BBox: {bbox}")
-                    found = True
+            for i, t in enumerate(texts):
+                clean_t = re.sub(r"[^A-Z0-9]", "", str(t).upper())
+                if not clean_t:
+                    continue
+                sc = scores[i] if i < len(scores) else 1.0
+                bx = polys[i] if i < len(polys) else []
+                print(f"Text (A-Z, 0-9): {clean_t:<12} (Gốc: {t:<10}) | Confidence: {float(sc):.2f} | BBox: {bx}")
+                found = True
+
+    from src.ocr import PlateOCR
+    merged = "".join([re.sub(r"[^A-Z0-9]", "", str(t).upper()) for res in (results or []) for t in res.get("rec_texts", [])])
+    is_valid = PlateOCR.is_valid_vn_plate(merged)
+    print("-" * 50)
+    print(f"Biển số ghép được: '{merged}'")
+    print(f"Cấu trúc biển số VN hợp lệ: {'[CÓ]' if is_valid else '[KHÔNG]'}")
 
     if not found:
         print("Không phát hiện được văn bản nào trên ảnh.")
