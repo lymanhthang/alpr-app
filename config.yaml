@@ -6,7 +6,7 @@ device: "cpu"
 
 # Module phát hiện biển số (YOLO NCNN)
 detector:
-  model_path: "models/lp_det/best_ncnn_model"
+  model_path: "models/lp_det/384x640_best_ncnn_model"
   conf_threshold: 0.35
   iou_threshold: 0.45
   imgsz: 640
@@ -16,7 +16,7 @@ tracker:
   track_activation_threshold: 0.3
   lost_track_buffer: 30
   minimum_matching_threshold: 0.8
-  skip_frames: 3              # Chạy YOLO mỗi 3 frames (1, 4, 7...) để tối ưu FPS trên Pi 5
+  skip_frames: 3 # Chạy YOLO mỗi 3 frames (1, 4, 7...) để tối ưu FPS trên Pi 5
 
 # Module nhận diện ký tự (PaddleOCR ONNX Runtime sử dụng model trong thư mục models/)
 ocr:
@@ -28,10 +28,10 @@ ocr:
   rec_model_dir: "models/ch_rec"
   use_angle_cls: false
   min_confidence: 0.5
-  retry_interval_frames: 2    # Bỏ qua 2 frame tiếp theo giữa các lần thử nếu chưa đạt chuẩn VN
+  retry_interval_frames: 2 # Bỏ qua 2 frame tiếp theo giữa các lần thử nếu chưa đạt chuẩn VN
 
 # Cấu hình xuất kết quả & hiển thị
 output:
   save_result: true
   output_dir: "outputs"
-  show_live: false            # Set true nếu Raspberry Pi 5 có gắn màn hình HDMI
+  show_live: false # Set true nếu Raspberry Pi 5 có gắn màn hình HDMI
