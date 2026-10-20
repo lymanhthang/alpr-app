@@ -1,9 +1,11 @@
 """
 Điểm khởi chạy chính của ứng dụng ALPR trên Raspberry Pi 5.
 Hỗ trợ đầu vào: Ảnh (.jpg, .png), Video (.mp4, .avi), Webcam hoặc luồng RTSP.
+Tích hợp lưu trữ SQLite WAL, cơ chế voting đa frame và tra cứu lịch sử xe.
 """
 
 import argparse
+from datetime import datetime
 from pathlib import Path
 import sys
 import time
@@ -11,6 +13,7 @@ import cv2
 
 from src.config import load_config
 from src.pipeline import ALPRPipeline
+from src.storage.db import DatabaseManager
 
 
 def parse_args():
@@ -22,6 +25,39 @@ def parse_args():
         type=str,
         required=True,
         help="Đường dẫn file ảnh, video, hoặc số thứ tự webcam (VD: 0) hoặc URL RTSP",
+    )
+    parser.add_argument(
+        "--source-name",
+        type=str,
+        default=None,
+        help="Tên định danh nguồn (VD: 'Cổng chính', 'Cam_01', 'Demo_Video'). Tự suy luận nếu bỏ trống.",
+    )
+    parser.add_argument(
+        "--source-kind",
+        type=str,
+        choices=["camera", "video"],
+        default=None,
+        help="Loại nguồn: 'camera' hoặc 'video'. Tự động nhận diện nếu bỏ trống.",
+    )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        choices=["voting", "lock_first"],
+        default=None,
+        help="Chiến lược OCR: 'voting' (bỏ phiếu đa frame, khuyến nghị) hoặc 'lock_first' (khóa lần đầu).",
+    )
+    parser.add_argument(
+        "--start-time",
+        type=str,
+        default=None,
+        help="Mốc thời gian bắt đầu (timestamp số hoặc chuỗi ISO 'YYYY-MM-DDTHH:MM:SS'). Mặc định: thời gian hiện tại.",
+    )
+    parser.add_argument(
+        "--no-store",
+        "--no-db",
+        dest="no_store",
+        action="store_true",
+        help="Không lưu dữ liệu lượt xe và ảnh crop vào SQLite (phục vụ test và benchmark).",
     )
     parser.add_argument(
         "--config",
@@ -59,6 +95,21 @@ def is_image_file(source: str) -> bool:
     return ext in [".jpg", ".jpeg", ".png", ".bmp", ".webp"]
 
 
+def parse_start_time(time_str: str) -> float:
+    """Chuyển đổi chuỗi thời gian thành unix timestamp."""
+    try:
+        return float(time_str)
+    except ValueError:
+        pass
+
+    try:
+        dt = datetime.fromisoformat(time_str)
+        return dt.timestamp()
+    except Exception:
+        print(f"[Cảnh báo] Không thể đọc định dạng --start-time '{time_str}', sử dụng thời gian hiện tại.")
+        return time.time()
+
+
 def process_image(source: str, pipeline: ALPRPipeline, output_path: str, show: bool):
     print(f"\n[ALPR] Đang xử lý ảnh: {source}...")
     start_t = time.time()
@@ -69,7 +120,6 @@ def process_image(source: str, pipeline: ALPRPipeline, output_path: str, show: b
     print(f"[ALPR] Hoàn tất sau {duration:.2f} giây.")
     print(f"[ALPR] Danh sách biển số nhận diện được: {pipeline.ocr_cache}")
 
-    # In benchmark nếu được kích hoạt
     if pipeline.benchmark:
         pipeline.print_benchmark_report()
 
@@ -88,16 +138,17 @@ def process_image(source: str, pipeline: ALPRPipeline, output_path: str, show: b
 
 
 def process_video_or_camera(
-    source: str, pipeline: ALPRPipeline, output_path: str, show: bool
+    source: str,
+    pipeline: ALPRPipeline,
+    output_path: str,
+    show: bool,
+    is_live: bool,
 ):
-    # Kiểm tra nguồn là camera index hay file/RTSP
     if source.isdigit():
         cap_source = int(source)
-        is_live = True
         print(f"\n[ALPR] Đang mở Camera thiết bị số: {cap_source}...")
     else:
         cap_source = source
-        is_live = False
         print(f"\n[ALPR] Đang mở Video / Stream: {cap_source}...")
 
     cap = cv2.VideoCapture(cap_source)
@@ -108,6 +159,7 @@ def process_video_or_camera(
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps_in = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    pipeline.fps_in = fps_in
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if not is_live else 0
 
     writer = None
@@ -119,7 +171,7 @@ def process_video_or_camera(
         print(f"[ALPR] Video kết quả sẽ được ghi vào: {out_p.resolve()}")
 
     frame_idx = 0
-    start_time = time.time()
+    start_wall_time = time.time()
 
     print("[ALPR] Bắt đầu luồng xử lý... Nhấn Ctrl+C (hoặc 'q' nếu bật màn hình) để dừng.")
 
@@ -130,7 +182,7 @@ def process_video_or_camera(
                 break
 
             annotated_frame, active_tracks, ocr_cache = pipeline.process_frame(
-                frame, frame_idx=frame_idx
+                frame, frame_idx=frame_idx, is_live=is_live
             )
 
             if writer:
@@ -147,14 +199,14 @@ def process_video_or_camera(
                 percent = (frame_idx / total_frames) * 100
                 print(
                     f"  -> Tiến độ: {frame_idx}/{total_frames} frames ({percent:.1f}%) | "
-                    f"Biển số đã đọc: {len(ocr_cache)}"
+                    f"Biển số đã chốt: {len(ocr_cache)}"
                 )
 
     except KeyboardInterrupt:
         print("\n[ALPR] Đã dừng theo yêu cầu (KeyboardInterrupt).")
 
     finally:
-        total_time = time.time() - start_time
+        total_time = time.time() - start_wall_time
         avg_fps = frame_idx / total_time if total_time > 0 else 0.0
 
         cap.release()
@@ -163,20 +215,22 @@ def process_video_or_camera(
         if show:
             cv2.destroyAllWindows()
 
+        # Hoàn tất pipeline và chốt các track còn lại
+        pipeline.finish()
+
         print("\n" + "=" * 50)
         print("TỔNG KẾT KẾT QUẢ XỬ LÝ:")
-        print(f" - Tổng số frame đã xử lý: {frame_idx}")
-        print(f" - Thời gian thực thi: {total_time:.2f}s")
-        print(f" - Tốc độ trung bình: {avg_fps:.2f} FPS")
-        print(f" - Tổng số lần gọi OCR: {pipeline.ocr_calls_count}")
+        print(f" - Tổng số frame đã xử lý : {frame_idx}")
+        print(f" - Thời gian thực thi     : {total_time:.2f}s")
+        print(f" - Tốc độ trung bình      : {avg_fps:.2f} FPS")
+        print(f" - Tổng số lần gọi OCR    : {pipeline.ocr_calls_count}")
         print(f" - Danh sách biển số thu thập được:")
         for tid, text in pipeline.ocr_cache.items():
             print(f"    * Track #{tid}: {text}")
         if output_path and writer:
-            print(f" - File video đã lưu tại: {output_path}")
+            print(f" - File video đã lưu tại   : {output_path}")
         print("=" * 50 + "\n")
 
-        # In báo cáo benchmark chi tiết nếu được kích hoạt
         if pipeline.benchmark:
             pipeline.print_benchmark_report()
 
@@ -185,26 +239,69 @@ def main():
     args = parse_args()
     config = load_config(args.config)
 
-    # Ghi đè skip-frames từ tham số dòng lệnh nếu có
+    # Ghi đè cấu hình từ CLI
     if args.skip_frames is not None:
         config.tracker.skip_frames = args.skip_frames
+    if args.strategy is not None:
+        config.ocr.strategy = args.strategy
 
-    # Xác định đường dẫn file output mặc định nếu cần lưu
+    # Tự động nhận diện loại nguồn và tên nguồn
+    is_live = False
+    source_kind = args.source_kind
+    if source_kind is None:
+        if args.source.isdigit() or args.source.startswith("rtsp://") or args.source.startswith("http://"):
+            source_kind = "camera"
+            is_live = True
+        else:
+            source_kind = "video"
+            is_live = False
+
+    source_name = args.source_name
+    if source_name is None:
+        if args.source.isdigit():
+            source_name = f"Camera_{args.source}"
+        else:
+            source_name = Path(args.source).stem
+
+    # Mốc thời gian bắt đầu
+    start_ts = parse_start_time(args.start_time) if args.start_time else time.time()
+
+    # Đăng ký hoặc lấy ID nguồn từ SQLite DB
+    source_id = 1
+    if not args.no_store:
+        try:
+            db = DatabaseManager(config.storage.db_path)
+            source_id = db.get_or_create_source(
+                name=source_name, kind=source_kind, uri=str(args.source)
+            )
+            print(f"[ALPR] Đã gán Source: '{source_name}' (ID: {source_id}, Loại: {source_kind})")
+        except Exception as e:
+            print(f"[ALPR Warning] Không thể kết nối DB để lấy source_id: {e}")
+    else:
+        print("[ALPR] ⚠️  Chế độ TEST / BENCHMARK (--no-db / --no-store): Đã TẮT lưu CSDL SQLite và lưu ảnh crop.")
+
+    # Đường dẫn output
     output_path = args.output
     if output_path is None and config.output.save_result:
-        source_name = Path(args.source).stem if not args.source.isdigit() else "camera"
         ext = ".jpg" if is_image_file(args.source) else ".mp4"
         output_path = f"{config.output.output_dir}/output_{source_name}{ext}"
 
     show = args.show or config.output.show_live
 
-    # Khởi tạo pipeline (có hỗ trợ chế độ benchmark)
-    pipeline = ALPRPipeline(config, benchmark=args.benchmark)
+    # Khởi tạo pipeline
+    pipeline = ALPRPipeline(
+        config=config,
+        benchmark=args.benchmark,
+        source_id=source_id,
+        fps_in=25.0,
+        start_time=start_ts,
+        no_store=args.no_store,
+    )
 
     if is_image_file(args.source):
         process_image(args.source, pipeline, output_path, show)
     else:
-        process_video_or_camera(args.source, pipeline, output_path, show)
+        process_video_or_camera(args.source, pipeline, output_path, show, is_live=is_live)
 
 
 if __name__ == "__main__":

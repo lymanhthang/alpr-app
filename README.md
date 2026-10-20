@@ -25,7 +25,7 @@ Hệ thống nhận diện biển số xe tự động (ALPR - Automatic License
   - Khi xe mới xuất hiện, hệ thống chạy OCR ngay lập tức.
   - Nếu kết quả đạt chuẩn biển số Việt Nam (`is_valid_vn_plate`), biển số được **khóa vĩnh viễn vào Cache**, các frame tiếp theo không tốn thêm tài nguyên OCR.
   - Nếu chưa đạt chuẩn (xe ở xa, rung lắc hoặc mờ), hệ thống **bỏ qua không OCR trong 2 frame tiếp theo** (cooldown) rồi thử lại ở frame kế tiếp. Quá trình lặp lại cho đến khi nhận diện thành công hoặc xe rời khỏi khung hình.
-- 🛡️ **Bộ Lọc Ký Tự & Cấu Trúc Biển Số VN**: Chỉ chấp nhận ký tự in hoa `[A-Z0-9]`, chỉ vẽ lên khung hình đối với các biển số đạt cấu trúc chuẩn Việt Nam (`^[0-9]{2}[A-Z][A-Z0-9]?[0-9]{4,5}$`).
+- 🛡️ **Bộ Lọc Ký Tự & Cấu Trúc Biển Số VN**: Chỉ chấp nhận ký tự in hoa `[A-Z0-9]`, chỉ vẽ lên khung hình đối với các biển số đạt cấu trúc chuẩn Việt Nam (mã tỉnh 11-99: `^(?:1[1-9]|[2-9][0-9])[A-Z][A-Z0-9]?[0-9]{4,5}$`).
 - ⏱️ **Công Cụ Benchmark Tích Hợp**: Đo lường và báo cáo chi tiết thời gian load model, latency detector, latency OCR và tốc độ pipeline thực tế.
 
 ---
@@ -153,11 +153,11 @@ python main.py --source test_data/videos/demo.mp4 --skip-frames 3
 
 - Với Webcam USB hoặc Camera CSI (thiết bị 0):
   ```bash
-  python main.py --source 0
+  python main.py --source 0 --source-name "Cổng Chính"
   ```
 - Với Camera IP qua luồng RTSP:
   ```bash
-  python main.py --source "rtsp://admin:password@192.168.1.100:554/stream1"
+  python main.py --source "rtsp://admin:password@192.168.1.100:554/stream1" --source-name "Camera Tuyến 1"
   ```
 - Nếu Pi 5 có kết nối màn hình HDMI trực tiếp, thêm cờ `--show`:
   ```bash
@@ -166,13 +166,53 @@ python main.py --source test_data/videos/demo.mp4 --skip-frames 3
 
 ---
 
-## 📊 Chế Độ Đo Benchmark Chi Tiết (`--benchmark`)
+## 🌐 Khởi Chạy Web Dashboard Tra Cứu Lịch Sử Xe (`run_api.py`)
 
-Để kiểm tra chính xác thời gian load model, latency từng module và FPS của hệ thống, thêm cờ `--benchmark`:
+Hệ thống cung cấp sẵn máy chủ FastAPI tích hợp giao diện Web tĩnh hiện đại, hỗ trợ:
+- Tìm kiếm theo biển số xe (hỗ trợ **Tìm kiếm mờ - Fuzzy search** với `rapidfuzz` xử lý lỗi OCR).
+- Lọc theo khoảng thời gian, nguồn camera / video.
+- Xem ảnh crop cận cảnh biển số, đối chiếu **chuỗi OCR thô** và **chuỗi sau khi sửa lỗi**.
+- Xem khung cảnh và **vẽ quỹ đạo di chuyển (trajectory)** của phương tiện trên khung hình.
+
+Khởi chạy máy chủ:
 
 ```bash
-python main.py --source test_data/imgs/carlong_0004.png --benchmark
+python scripts/run_api.py --port 8000
 ```
+
+- Mở trình duyệt truy cập: `http://localhost:8000` (hoặc `http://<IP_Raspberry_Pi>:8000` từ thiết bị cùng mạng LAN).
+
+
+---
+
+## 🧹 Dọn Dẹp / Xóa Dữ Liệu Trong CSDL (`clean_db.py`)
+
+Khi bạn muốn xóa toàn bộ lịch sử các lượt xe để làm mới hệ thống hoặc test lại từ đầu (nhưng vẫn giữ nguyên cấu trúc bảng và index):
+
+```bash
+# Xóa sạch toàn bộ dữ liệu lượt xe và ảnh crop (có hộp thoại hỏi xác nhận):
+python scripts/clean_db.py
+
+# Xóa nhanh không cần gõ xác nhận:
+python scripts/clean_db.py -y
+
+# Chỉ xóa bảng sightings, giữ lại danh sách Camera/Video đã đăng ký:
+python scripts/clean_db.py --keep-sources
+```
+
+---
+
+## 📊 Chế Độ Đo Benchmark Chi Tiết (`--benchmark`) & Tắt Lưu Trữ (`--no-db`)
+
+Để kiểm tra chính xác thời gian load model, latency từng module và FPS của hệ thống:
+
+```bash
+# Đo benchmark và tắt hoàn toàn việc ghi CSDL SQLite / lưu ảnh crop:
+python main.py --source test_data/videos/Recording2026-10-14-211324.mp4 --benchmark --no-db
+```
+
+> [!TIP]
+> Cờ `--no-db` (hoặc `--no-store`) sẽ tắt toàn bộ luồng ghi ngầm, không tạo kết nối SQLite và không ghi ảnh xuống đĩa. Rất thích hợp khi bạn cần chạy thử nghiệm lặp lại, đo FPS tối đa hoặc test các thuật toán mà không làm phình dung lượng CSDL.
 
 **Mẫu kết quả báo cáo benchmark:**
 

@@ -36,6 +36,43 @@ class OCRConfig:
     min_confidence: float = 0.5
     retry_interval_frames: int = 2  # Bỏ qua 2 frame tiếp theo nếu chưa đạt chuẩn biển số VN
 
+    # Nâng cao độ tin cậy
+    strategy: str = "voting"  # "voting" hoặc "lock_first" (chế độ cũ)
+    use_regex_filter: bool = True
+    use_quality_selection: bool = True
+    use_char_correction: bool = True
+    quality_min_score: float = 0.35
+    max_ocr_per_track: int = 8
+    early_lock_enabled: bool = True
+    early_lock_votes: int = 3
+    early_lock_conf: float = 0.85
+
+
+@dataclass
+class StorageConfig:
+    enabled: bool = True
+    db_path: str = "data/alpr.db"
+    crops_dir: str = "data/crops"
+    contexts_dir: str = "data/contexts"
+    clips_dir: str = "data/clips"
+    retention_days: int = 30
+    max_disk_gb: float = 20.0
+    queue_maxsize: int = 256
+
+
+@dataclass
+class ClipConfig:
+    enabled: bool = False
+    pre_seconds: float = 3.0
+    post_seconds: float = 2.0
+    scale: float = 0.5
+
+
+@dataclass
+class ApiConfig:
+    host: str = "0.0.0.0"
+    port: int = 8000
+
 
 @dataclass
 class OutputConfig:
@@ -50,6 +87,9 @@ class AppConfig:
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     ocr: OCRConfig = field(default_factory=OCRConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
+    clip: ClipConfig = field(default_factory=ClipConfig)
+    api: ApiConfig = field(default_factory=ApiConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
 
@@ -65,6 +105,9 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
     det_data = data.get("detector", {})
     tracker_data = data.get("tracker", {})
     ocr_data = data.get("ocr", {})
+    storage_data = data.get("storage", {})
+    clip_data = data.get("clip", {})
+    api_data = data.get("api", {})
     out_data = data.get("output", {})
 
     return AppConfig(
@@ -91,6 +134,35 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             use_angle_cls=bool(ocr_data.get("use_angle_cls", False)),
             min_confidence=float(ocr_data.get("min_confidence", 0.5)),
             retry_interval_frames=int(ocr_data.get("retry_interval_frames", 2)),
+            strategy=str(ocr_data.get("strategy", "voting")),
+            use_regex_filter=bool(ocr_data.get("use_regex_filter", True)),
+            use_quality_selection=bool(ocr_data.get("use_quality_selection", True)),
+            use_char_correction=bool(ocr_data.get("use_char_correction", True)),
+            quality_min_score=float(ocr_data.get("quality_min_score", 0.35)),
+            max_ocr_per_track=int(ocr_data.get("max_ocr_per_track", 8)),
+            early_lock_enabled=bool(ocr_data.get("early_lock_enabled", True)),
+            early_lock_votes=int(ocr_data.get("early_lock_votes", 3)),
+            early_lock_conf=float(ocr_data.get("early_lock_conf", 0.85)),
+        ),
+        storage=StorageConfig(
+            enabled=bool(storage_data.get("enabled", True)),
+            db_path=str(storage_data.get("db_path", "data/alpr.db")),
+            crops_dir=str(storage_data.get("crops_dir", "data/crops")),
+            contexts_dir=str(storage_data.get("contexts_dir", "data/contexts")),
+            clips_dir=str(storage_data.get("clips_dir", "data/clips")),
+            retention_days=int(storage_data.get("retention_days", 30)),
+            max_disk_gb=float(storage_data.get("max_disk_gb", 20.0)),
+            queue_maxsize=int(storage_data.get("queue_maxsize", 256)),
+        ),
+        clip=ClipConfig(
+            enabled=bool(clip_data.get("enabled", False)),
+            pre_seconds=float(clip_data.get("pre_seconds", 3.0)),
+            post_seconds=float(clip_data.get("post_seconds", 2.0)),
+            scale=float(clip_data.get("scale", 0.5)),
+        ),
+        api=ApiConfig(
+            host=str(api_data.get("host", "0.0.0.0")),
+            port=int(api_data.get("port", 8000)),
         ),
         output=OutputConfig(
             save_result=bool(out_data.get("save_result", True)),

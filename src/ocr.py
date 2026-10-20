@@ -72,10 +72,10 @@ class PlateOCR:
         except Exception:
             pass
 
-    def recognize_plate(self, plate_crop: np.ndarray) -> Tuple[Optional[str], float]:
+    def recognize_raw(self, plate_crop: np.ndarray) -> Tuple[Optional[str], float]:
         """
-        Nhận diện ký tự trên ảnh cắt biển số bằng PP-OCRv6 (PaddleOCR 3.x).
-        Rút gọn tinh gọn: ghép trực tiếp các cụm chữ theo thứ tự tự nhiên của PaddleOCR.
+        Nhận diện ký tự thô từ ảnh crop mà không áp đặt lọc độ dài hay regex.
+        Phục vụ cho các bộ xử lý độ tin cậy và bỏ phiếu đa frame.
         """
         if plate_crop is None or plate_crop.size == 0 or self.ocr is None:
             return None, 0.0
@@ -92,18 +92,29 @@ class PlateOCR:
                         all_scores.append(float(score))
 
             final_text = "".join(all_texts)
-            if len(final_text) >= 5:
+            if final_text:
                 return final_text, float(np.mean(all_scores)) if all_scores else 0.0
         except Exception as e:
             print(f"[OCR Warning] {e}")
 
         return None, 0.0
 
+    def recognize_plate(self, plate_crop: np.ndarray) -> Tuple[Optional[str], float]:
+        """
+        Nhận diện ký tự trên ảnh cắt biển số bằng PP-OCRv6 (PaddleOCR 3.x).
+        Rút gọn tinh gọn: ghép trực tiếp các cụm chữ theo thứ tự tự nhiên của PaddleOCR.
+        """
+        raw_text, score = self.recognize_raw(plate_crop)
+        if raw_text and len(raw_text) >= 5:
+            return raw_text, score
+        return None, 0.0
+
+
     @staticmethod
     def is_valid_vn_plate(plate: str) -> bool:
         """
         Kiểm tra cấu trúc biển số xe Việt Nam hợp lệ (7 - 9 ký tự):
-        - 2 ký tự đầu: mã tỉnh thành (01-99)
+        - 2 ký tự đầu: mã tỉnh thành (11-99)
         - Ký tự thứ 3: chữ cái series (A-Z)
         - Ký tự thứ 4: chữ cái hoặc chữ số tùy chọn (A-Z, 0-9)
         - 4 hoặc 5 ký tự cuối: dãy số đăng ký (0-9)
@@ -111,5 +122,6 @@ class PlateOCR:
         """
         if not plate:
             return False
-        pattern = r"^[0-9]{2}[A-Z][A-Z0-9]?[0-9]{4,5}$"
+        pattern = r"^(?:1[1-9]|[2-9][0-9])[A-Z][A-Z0-9]?[0-9]{4,5}$"
         return bool(re.match(pattern, plate))
+

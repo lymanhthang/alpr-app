@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Tra Cứu Biển Số Xe - ALPR Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/style.css?v=2">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar / Navigation -->
+        <header class="app-header">
+            <div class="header-brand">
+                <div class="brand-logo">
+                    <i class="fa-solid fa-car-side"></i>
+                </div>
+                <div class="brand-text">
+                    <h1>ALPR <span>TRACE</span></h1>
+                    <p>Hệ thống giám sát & tra cứu phương tiện thông minh</p>
+                </div>
+            </div>
+            <div class="header-status">
+                <div class="status-indicator online"></div>
+                <span id="system-status-text">Hệ thống đang hoạt động</span>
+            </div>
+        </header>
+
+        <!-- Stats Overview Cards -->
+        <section class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon icon-blue">
+                    <i class="fa-solid fa-car"></i>
+                </div>
+                <div class="stat-data">
+                    <span class="stat-label">Tổng lượt xe ghi nhận</span>
+                    <h3 id="stat-total-sightings">0</h3>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon icon-green">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
+                <div class="stat-data">
+                    <span class="stat-label">Biển số đạt chuẩn VN</span>
+                    <h3 id="stat-total-valid">0</h3>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon icon-amber">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                </div>
+                <div class="stat-data">
+                    <span class="stat-label">Đã hiệu chỉnh ký tự OCR</span>
+                    <h3 id="stat-total-corrected">0</h3>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon icon-purple">
+                    <i class="fa-solid fa-fingerprint"></i>
+                </div>
+                <div class="stat-data">
+                    <span class="stat-label">Biển số duy nhất</span>
+                    <h3 id="stat-unique-plates">0</h3>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Search & Filter Panel -->
+        <section class="filter-panel glass-card">
+            <div class="search-bar-row">
+                <div class="search-input-group">
+                    <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                    <input 
+                        type="text" 
+                        id="search-plate-input" 
+                        placeholder="Nhập biển số cần tra cứu (VD: 30A12345, 51F...)" 
+                        autocomplete="off"
+                        spellcheck="false"
+                    >
+                    <button id="clear-search-btn" class="btn-clear" title="Xóa tìm kiếm">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <button id="btn-submit-search" class="btn-primary">
+                    <i class="fa-solid fa-filter"></i> Tra Cứu
+                </button>
+            </div>
+
+            <div class="filter-options-row">
+                <div class="filter-col">
+                    <label for="filter-source"><i class="fa-solid fa-video"></i> Nguồn ghi:</label>
+                    <select id="filter-source">
+                        <option value="">Tất cả Camera / Video</option>
+                    </select>
+                </div>
+
+                <div class="filter-col">
+                    <label for="filter-time-from"><i class="fa-regular fa-clock"></i> Từ thời điểm:</label>
+                    <input type="datetime-local" id="filter-time-from">
+                </div>
+
+                <div class="filter-col">
+                    <label for="filter-time-to"><i class="fa-regular fa-clock"></i> Đến thời điểm:</label>
+                    <input type="datetime-local" id="filter-time-to">
+                </div>
+
+                <div class="filter-checkboxes">
+                    <label class="custom-checkbox" title="Tự động phát hiện khi ký tự bị OCR đọc nhầm">
+                        <input type="checkbox" id="check-fuzzy" checked>
+                        <span class="checkbox-indicator"></span>
+                        <span>Tìm kiếm mờ (Fuzzy)</span>
+                    </label>
+
+                    <label class="custom-checkbox">
+                        <input type="checkbox" id="check-corrected-only">
+                        <span class="checkbox-indicator"></span>
+                        <span>Chỉ xe có hiệu chỉnh OCR</span>
+                    </label>
+
+                    <label class="custom-checkbox">
+                        <input type="checkbox" id="check-valid-only">
+                        <span class="checkbox-indicator"></span>
+                        <span>Chỉ biển chuẩn VN</span>
+                    </label>
+
+                    <label class="custom-checkbox" title="Lọc các biển số không OCR được hoặc sai format chuẩn Việt Nam">
+                        <input type="checkbox" id="check-unknown-only">
+                        <span class="checkbox-indicator"></span>
+                        <span>Biển không xác định (Unknown)</span>
+                    </label>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Search Results Section -->
+        <section class="results-container">
+            <div class="results-header">
+                <h2><i class="fa-solid fa-clock-rotate-left"></i> Lịch Sử Lượt Xe <span id="results-count-badge">0 kết quả</span></h2>
+                <div class="results-actions">
+                    <button id="btn-refresh" class="btn-secondary" title="Tải lại dữ liệu">
+                        <i class="fa-solid fa-arrows-rotate"></i> Làm mới
+                    </button>
+                </div>
+            </div>
+
+            <div id="loading-spinner" class="loading-state hidden">
+                <div class="spinner"></div>
+                <p>Đang tìm kiếm dữ liệu...</p>
+            </div>
+
+            <div id="empty-state" class="empty-state hidden">
+                <i class="fa-solid fa-folder-open empty-icon"></i>
+                <h3>Không tìm thấy lượt xe nào</h3>
+                <p>Thử điều chỉnh lại bộ lọc, nhập ký tự biển số khác hoặc bỏ dấu chọn lọc nghiêm ngặt.</p>
+            </div>
+
+            <div id="results-grid" class="results-grid">
+                <!-- Vehicle Cards will be dynamically inserted here -->
+            </div>
+        </section>
+    </div>
+
+    <!-- Sighting Detail Modal -->
+    <div id="detail-modal" class="modal-overlay hidden">
+        <div class="modal-container glass-card">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <h3 id="modal-plate-title">BIỂN SỐ CHI TIẾT</h3>
+                    <div id="modal-badges" class="modal-badges"></div>
+                </div>
+                <button id="btn-close-modal" class="btn-close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="modal-body">
+                <!-- Media Viewers -->
+                <div class="modal-media-grid">
+                    <div class="media-box">
+                        <div class="media-box-title"><i class="fa-solid fa-crop-simple"></i> Ảnh Crop Cận Cảnh</div>
+                        <div class="crop-preview-wrapper">
+                            <img id="modal-crop-img" src="" alt="Crop Biển Số" class="modal-crop-img">
+                        </div>
+                    </div>
+
+                    <div class="media-box">
+                        <div class="media-box-title">
+                            <i class="fa-solid fa-route"></i> Khung Cảnh & Quỹ Đạo Phương Tiện
+                        </div>
+                        <div class="trajectory-canvas-wrapper" id="trajectory-canvas-wrapper">
+                            <canvas id="trajectory-canvas"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Comparison & Details Table -->
+                <div class="modal-details-grid">
+                    <div class="detail-card">
+                        <h4><i class="fa-solid fa-circle-info"></i> Thông Tin Lượt Xe</h4>
+                        <div class="info-table">
+                            <div class="info-row">
+                                <span class="info-label">Nguồn:</span>
+                                <span class="info-value" id="modal-source-name">-</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Thời gian vào:</span>
+                                <span class="info-value" id="modal-start-time">-</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Thời gian ra:</span>
+                                <span class="info-value" id="modal-end-time">-</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Độ tin cậy OCR:</span>
+                                <span class="info-value" id="modal-conf-value">-</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Chế độ chốt:</span>
+                                <span class="info-value" id="modal-lock-reason">-</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Số lần chạy OCR:</span>
+                                <span class="info-value" id="modal-ocr-count">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="detail-card">
+                        <h4><i class="fa-solid fa-spell-check"></i> Đối Chiếu Hiệu Chỉnh Ký Tự</h4>
+                        <div id="correction-panel-content">
+                            <!-- Corrections details rendered here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/app.js?v=2"></script>
+</body>
+</html>

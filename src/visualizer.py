@@ -24,22 +24,25 @@ class Visualizer:
         frame: np.ndarray,
         tracks: List[Tuple[int, np.ndarray, float]],
         ocr_cache: Dict[int, str],
+        provisional_cache: Optional[Dict[int, str]] = None,
         fps: float = 0.0,
         ocr_calls: int = 0,
     ) -> np.ndarray:
         """
         Vẽ thông tin biển số lên frame ảnh.
-        Chỉ vẽ những đối tượng có biển số hợp lệ (valid_vn_plate).
+        Biển số đã chốt hợp lệ hiển thị màu xanh lá; biển số tạm thời/đang chờ hiển thị màu cam.
 
         Args:
             frame: Ảnh BGR gốc.
             tracks: Danh sách (track_id, xyxy, conf).
-            ocr_cache: Bảng tra {track_id: plate_text}.
+            ocr_cache: Bảng tra {track_id: plate_text} đã chốt.
+            provisional_cache: Bảng tra {track_id: plate_text} tạm thời trong lúc chờ bỏ phiếu.
             fps: Tốc độ xử lý khung hình / giây.
             ocr_calls: Tổng số lần đã gọi OCR thực tế.
         """
         annotated = frame.copy()
         h, w = annotated.shape[:2]
+        prov = provisional_cache or {}
 
         for track_id, box, conf in tracks:
             x1, y1, x2, y2 = [int(v) for v in box]
@@ -52,9 +55,13 @@ class Visualizer:
             if is_valid:
                 color = self.box_color
                 label = f"#{track_id}: {plate_text}"
+            elif track_id in prov and prov[track_id]:
+                color = self.pending_color
+                label = f"#{track_id}: {prov[track_id]}?"
             else:
                 color = self.pending_color
                 label = f"#{track_id}: UNKNOWN"
+
 
             # 1. Vẽ bounding box bo viền nổi bật (Xanh nếu hợp lệ, Cam nếu UNKNOWN)
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness=2)

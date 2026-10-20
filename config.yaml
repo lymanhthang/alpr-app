@@ -16,9 +16,9 @@ tracker:
   track_activation_threshold: 0.3
   lost_track_buffer: 30
   minimum_matching_threshold: 0.8
-  skip_frames: 3 # Chạy YOLO mỗi 3 frames (1, 4, 7...) để tối ưu FPS trên Pi 5
+  skip_frames: 2 # Chạy YOLO mỗi 3 frames (1, 4, 7...) để tối ưu FPS trên Pi 5
 
-# Module nhận diện ký tự (PaddleOCR ONNX Runtime sử dụng model trong thư mục models/)
+# Module nhận diện ký tự & Nâng cao độ tin cậy
 ocr:
   engine: "onnxruntime"
   lang: "en"
@@ -29,6 +29,40 @@ ocr:
   use_angle_cls: false
   min_confidence: 0.5
   retry_interval_frames: 2 # Bỏ qua 2 frame tiếp theo giữa các lần thử nếu chưa đạt chuẩn VN
+
+  # Chiến lược độ tin cậy
+  strategy: "voting" # "voting" (bỏ phiếu đa frame) hoặc "lock_first" (khóa ngay lần đầu)
+  use_regex_filter: true
+  use_quality_selection: true
+  use_char_correction: true
+  quality_min_score: 0.35
+  max_ocr_per_track: 8
+  early_lock_enabled: true
+  early_lock_votes: 3
+  early_lock_conf: 0.85
+
+# Cấu hình lưu trữ CSDL (SQLite WAL) & Ảnh
+storage:
+  enabled: true
+  db_path: "data/alpr.db"
+  crops_dir: "data/crops"
+  contexts_dir: "data/contexts"
+  clips_dir: "data/clips"
+  retention_days: 30
+  max_disk_gb: 20.0
+  queue_maxsize: 256
+
+# Cấu hình trích xuất clip ngắn (Ring Buffer - tắt mặc định để tối ưu CPU)
+clip:
+  enabled: false
+  pre_seconds: 3.0
+  post_seconds: 2.0
+  scale: 0.5
+
+# Cấu hình Web API & Tra cứu
+api:
+  host: "0.0.0.0"
+  port: 8000
 
 # Cấu hình xuất kết quả & hiển thị
 output:
