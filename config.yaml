@@ -6,7 +6,7 @@ device: "cpu"
 
 # Module phát hiện biển số (YOLO NCNN)
 detector:
-  model_path: "models/lp_det/384x640_best_ncnn_model"
+  model_path: "models/lp_det/384x640_fp16_ncnn_model"
   conf_threshold: 0.35
   iou_threshold: 0.45
   imgsz: 640
@@ -64,8 +64,12 @@ api:
   host: "0.0.0.0"
   port: 8000
 
-# Cấu hình xuất kết quả & hiển thị
+# Cấu hình xuất kết quả, hiển thị & phát luồng web
 output:
   save_result: true
   output_dir: "outputs"
-  show_live: false # Set true nếu Raspberry Pi 5 có gắn màn hình HDMI
+  show_live: false # Set true nếu Raspberry Pi 5 có gắn màn hình HDMI trực tiếp
+  web_stream: false # Bật phát luồng video qua Web HTTP để xem trên trình duyệt
+  stream_host: "0.0.0.0"
+  stream_port: 8080 # Cổng phát luồng Web MJPEG (truy cập: http://<IP_Pi>:8080)
+  stream_quality: 80 # Chất lượng nén ảnh JPEG (1-100, 80 tối ưu CPU/độ nét)

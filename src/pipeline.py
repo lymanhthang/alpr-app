@@ -83,9 +83,13 @@ class ALPRPipeline:
         self.early_locks_count: int = 0
         self.track_end_locks_count: int = 0
 
-        # 6. Tính toán FPS
-        self.prev_time: float = time.time()
-        self.fps: float = 0.0
+        # 6. Tính toán FPS — sliding window + EMA kết hợp
+        # _frame_ts: timestamp chính xác ngay đầu process_frame (trước mọi logic)
+        self._frame_ts: float = 0.0          # timestamp frame trước
+        self.fps: float = 0.0                # FPS EMA hiển thị
+        # Sliding window lưu N khoảng thời gian gần nhất để warmup nhanh
+        self._fps_window: List[float] = []   # danh sách các dt gần nhất (giây)
+        self._FPS_WINDOW_SIZE: int = 30      # độ dài cửa sổ
 
         print(f"[Pipeline] Sẵn sàng. Tỷ lệ Skip-frame: mỗi {self.skip_frames} frame.")
         if self.benchmark:
@@ -112,11 +116,36 @@ class ALPRPipeline:
                 - active_tracks: Danh sách track đang active.
                 - ocr_cache: Bảng cache biển số đã chốt.
         """
+        # ── ĐO TIMESTAMP NGAY ĐẦU (trước bất kỳ logic nào) ──────────────────
+        # Dùng time.perf_counter() để đo thời gian xử lý pipeline (microsecond precision).
+        # Dùng time.time() làm wall-clock độc lập để tính FPS thực tế giữa các frame.
         t_frame_start = time.perf_counter()
+        now_wall = time.time()             # wall-clock ngay khi frame vào pipeline
+
+        # ── TÍNH FPS BẰNG SLIDING WINDOW + EMA KẾT HỢP ──────────────────────
+        # Đo dt chính xác: thời gian thực tế từ đầu frame trước đến đầu frame này.
+        # Giới hạn dt tối đa 2 giây để loại trừ pause/debug làm méo FPS.
+        if self._frame_ts > 0:
+            dt = now_wall - self._frame_ts
+            if 0.0001 < dt < 2.0:          # bỏ dt = 0 và dt quá lớn (pause)
+                self._fps_window.append(dt)
+                if len(self._fps_window) > self._FPS_WINDOW_SIZE:
+                    self._fps_window.pop(0)
+
+                # FPS từ sliding window (ổn định hơn instant FPS)
+                window_fps = len(self._fps_window) / sum(self._fps_window)
+
+                # EMA với α = 0.15: phản ứng nhanh với thay đổi thực sự
+                # (α lớn = giá trị mới có trọng số cao hơn — đúng với kiến thức EMA)
+                alpha = 0.15
+                self.fps = window_fps if self.fps == 0.0 else (
+                    alpha * window_fps + (1.0 - alpha) * self.fps
+                )
+        self._frame_ts = now_wall
 
         # 1. Tính toán mốc thời gian của frame
         if is_live:
-            curr_time = time.time()
+            curr_time = now_wall          # tái sử dụng wall-clock đã đo bên trên
         else:
             curr_time = self.start_time + (frame_idx / self.fps_in)
         video_pos_s = frame_idx / self.fps_in
@@ -124,14 +153,6 @@ class ALPRPipeline:
         # Ghi frame vào ring buffer (nếu bật tính năng clip)
         if self.clip_buffer.enabled:
             self.clip_buffer.add_frame(frame, curr_time)
-
-        # 2. Tính toán FPS tức thời
-        now_wall = time.time()
-        dt = now_wall - self.prev_time
-        if dt > 0:
-            instant_fps = 1.0 / dt
-            self.fps = (self.fps * 0.9 + instant_fps * 0.1) if self.fps > 0 else instant_fps
-        self.prev_time = now_wall
 
         # 3. Chạy Detector (YOLO) hoặc tái sử dụng từ Tracker (Skip-frame)
         is_detection_frame = (frame_idx % self.skip_frames == 0)
@@ -396,7 +417,8 @@ class ALPRPipeline:
 
             print(f"   * Toàn bộ Pipeline thực tế (Detection + Track + OCR + Draw):")
             print(f"       - Tổng số frames xử lý : {len(self.pipeline_times)}")
-            print(f"       - Trung bình mỗi frame : {pipe_avg:6.2f} ms (~{pipe_fps:.1f} FPS)")
+            print(f"       - Trung bình mỗi frame : {pipe_avg:6.2f} ms (~{pipe_fps:.1f} FPS lý thuyết xử lý)")
+            print(f"         ⚠ Lưu ý: FPS thực tế thấp hơn do bao gồm thời gian đọc frame I/O")
             print(f"       - Nhanh nhất / Chậm    : {pipe_min:6.2f} ms / {pipe_max:6.2f} ms")
             print(f"       - Tổng thời gian chạy  : {total_time_s:6.2f} s")
             print(f"   * Thống kê chốt kết quả (Locking Stats):")

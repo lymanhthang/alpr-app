@@ -83,6 +83,25 @@ def parse_args():
         help="Bật cửa sổ hiển thị trực tiếp (yêu cầu Raspberry Pi 5 có màn hình)",
     )
     parser.add_argument(
+        "--stream",
+        "--web-stream",
+        dest="web_stream",
+        action="store_true",
+        help="Bắn luồng video đã xử lý qua Web HTTP (MJPEG) để xem trực tiếp trên trình duyệt",
+    )
+    parser.add_argument(
+        "--stream-port",
+        type=int,
+        default=None,
+        help="Cổng phát luồng Web (mặc định lấy từ config hoặc 8080)",
+    )
+    parser.add_argument(
+        "--stream-host",
+        type=str,
+        default=None,
+        help="Địa chỉ IP host phát luồng Web (mặc định: 0.0.0.0)",
+    )
+    parser.add_argument(
         "--benchmark",
         action="store_true",
         help="Bật chế độ đo benchmark chi tiết (thời gian load model, plate detection, ocr, pipeline)",
@@ -110,7 +129,17 @@ def parse_start_time(time_str: str) -> float:
         return time.time()
 
 
-def process_image(source: str, pipeline: ALPRPipeline, output_path: str, show: bool):
+def process_image(
+    source: str,
+    pipeline: ALPRPipeline,
+    output_path: str,
+    show: bool,
+    web_stream: bool = False,
+    stream_host: str = "0.0.0.0",
+    stream_port: int = 8080,
+    stream_quality: int = 80,
+    source_name: str = "Ảnh ALPR",
+):
     print(f"\n[ALPR] Đang xử lý ảnh: {source}...")
     start_t = time.time()
 
@@ -130,6 +159,30 @@ def process_image(source: str, pipeline: ALPRPipeline, output_path: str, show: b
         cv2.imwrite(str(out_p), annotated)
         print(f"[ALPR] Đã lưu ảnh kết quả tại: {out_p.resolve()}")
 
+    if web_stream:
+        from src.streamer import WebStreamer
+        streamer = WebStreamer(
+            host=stream_host,
+            port=stream_port,
+            source_name=source_name,
+            jpeg_quality=stream_quality,
+        )
+        streamer.start()
+        streamer.update_frame(
+            frame=annotated,
+            fps=0.0,
+            active_tracks_count=len(pipeline.ocr_cache),
+            total_locked_count=len(pipeline.ocr_cache),
+        )
+        print("[ALPR] Đang phát ảnh kết quả qua Web. Nhấn Ctrl+C để dừng...")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            streamer.stop()
+
     if show:
         cv2.imshow("ALPR Result", annotated)
         print("[ALPR] Nhấn phím bất kỳ trên cửa sổ ảnh để thoát...")
@@ -143,6 +196,11 @@ def process_video_or_camera(
     output_path: str,
     show: bool,
     is_live: bool,
+    web_stream: bool = False,
+    stream_host: str = "0.0.0.0",
+    stream_port: int = 8080,
+    stream_quality: int = 80,
+    source_name: str = "Camera ALPR",
 ):
     if source.isdigit():
         cap_source = int(source)
@@ -170,6 +228,18 @@ def process_video_or_camera(
         writer = cv2.VideoWriter(str(out_p), fourcc, fps_in, (width, height))
         print(f"[ALPR] Video kết quả sẽ được ghi vào: {out_p.resolve()}")
 
+    # Khởi động Web Streamer nếu được kích hoạt
+    streamer = None
+    if web_stream:
+        from src.streamer import WebStreamer
+        streamer = WebStreamer(
+            host=stream_host,
+            port=stream_port,
+            source_name=source_name,
+            jpeg_quality=stream_quality,
+        )
+        streamer.start()
+
     frame_idx = 0
     start_wall_time = time.time()
 
@@ -184,6 +254,15 @@ def process_video_or_camera(
             annotated_frame, active_tracks, ocr_cache = pipeline.process_frame(
                 frame, frame_idx=frame_idx, is_live=is_live
             )
+
+            # Bắn khung hình đã vẽ thông tin tới máy chủ Web Streamer
+            if streamer:
+                streamer.update_frame(
+                    frame=annotated_frame,
+                    fps=pipeline.fps,
+                    active_tracks_count=len(active_tracks),
+                    total_locked_count=len(ocr_cache),
+                )
 
             if writer:
                 writer.write(annotated_frame)
@@ -214,6 +293,8 @@ def process_video_or_camera(
             writer.release()
         if show:
             cv2.destroyAllWindows()
+        if streamer:
+            streamer.stop()
 
         # Hoàn tất pipeline và chốt các track còn lại
         pipeline.finish()
@@ -244,6 +325,12 @@ def main():
         config.tracker.skip_frames = args.skip_frames
     if args.strategy is not None:
         config.ocr.strategy = args.strategy
+
+    # Tùy chọn phát luồng web
+    web_stream = args.web_stream or config.output.web_stream
+    stream_host = args.stream_host or config.output.stream_host or "0.0.0.0"
+    stream_port = args.stream_port or config.output.stream_port or 8080
+    stream_quality = getattr(config.output, "stream_quality", 80)
 
     # Tự động nhận diện loại nguồn và tên nguồn
     is_live = False
@@ -299,9 +386,30 @@ def main():
     )
 
     if is_image_file(args.source):
-        process_image(args.source, pipeline, output_path, show)
+        process_image(
+            source=args.source,
+            pipeline=pipeline,
+            output_path=output_path,
+            show=show,
+            web_stream=web_stream,
+            stream_host=stream_host,
+            stream_port=stream_port,
+            stream_quality=stream_quality,
+            source_name=source_name,
+        )
     else:
-        process_video_or_camera(args.source, pipeline, output_path, show, is_live=is_live)
+        process_video_or_camera(
+            source=args.source,
+            pipeline=pipeline,
+            output_path=output_path,
+            show=show,
+            is_live=is_live,
+            web_stream=web_stream,
+            stream_host=stream_host,
+            stream_port=stream_port,
+            stream_quality=stream_quality,
+            source_name=source_name,
+        )
 
 
 if __name__ == "__main__":

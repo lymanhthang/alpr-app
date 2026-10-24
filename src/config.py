@@ -79,6 +79,10 @@ class OutputConfig:
     save_result: bool = True
     output_dir: str = "outputs"
     show_live: bool = False
+    web_stream: bool = False
+    stream_host: str = "0.0.0.0"
+    stream_port: int = 8080
+    stream_quality: int = 80
 
 
 @dataclass
@@ -168,5 +172,9 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             save_result=bool(out_data.get("save_result", True)),
             output_dir=out_data.get("output_dir", "outputs"),
             show_live=bool(out_data.get("show_live", False)),
+            web_stream=bool(out_data.get("web_stream", False)),
+            stream_host=str(out_data.get("stream_host", "0.0.0.0")),
+            stream_port=int(out_data.get("stream_port", 8080)),
+            stream_quality=int(out_data.get("stream_quality", 80)),
         ),
     )

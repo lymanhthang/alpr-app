@@ -46,6 +46,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalOcrCount = document.getElementById('modal-ocr-count');
     const correctionPanelContent = document.getElementById('correction-panel-content');
 
+    // Initialize Live Stream Link
+    const liveStreamLink = document.getElementById('link-live-stream');
+    if (liveStreamLink) {
+        liveStreamLink.href = `http://${window.location.hostname || 'localhost'}:8080`;
+    }
+
     // Initialize
     loadSources();
     loadStats();

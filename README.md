@@ -159,6 +159,17 @@ python main.py --source test_data/videos/demo.mp4 --skip-frames 3
   ```bash
   python main.py --source "rtsp://admin:password@192.168.1.100:554/stream1" --source-name "Camera Tuyến 1"
   ```
+- **Bắn luồng trực tiếp ra Web để xem trên trình duyệt từ xa (Khuyến nghị cho Pi 5 không có màn hình HDMI)**:
+  ```bash
+  # Mặc định mở port 8080:
+  python main.py --source 0 --source-name "Cổng Chính" --stream
+
+  # Hoặc tùy biến port:
+  python main.py --source 0 --stream --stream-port 8088
+  ```
+  * Mở trình duyệt trên điện thoại/laptop cùng mạng Wi-Fi/LAN truy cập: `http://<IP_Raspberry_Pi>:8080`
+  * Giao diện Web cung cấp: Xem video trực tiếp thời gian thực, nút Toàn màn hình, Chụp ảnh snapshot, thống kê FPS và số lượng xe đang bám vết.
+  * Đường dẫn luồng MJPEG trực tiếp để nhúng vào hệ thống khác: `http://<IP_Raspberry_Pi>:8080/video_feed`
 - Nếu Pi 5 có kết nối màn hình HDMI trực tiếp, thêm cờ `--show`:
   ```bash
   python main.py --source 0 --show
@@ -264,6 +275,9 @@ python main.py --source test_data/videos/Recording2026-10-14-211324.mp4 --benchm
 |              | `retry_interval_frames`| `2`                            | Số frame bỏ qua giữa các lần thử nếu chưa đạt chuẩn VN |
 | **output**   | `save_result`         | `true`                          | Tự động lưu video/ảnh kết quả                     |
 |              | `output_dir`          | `outputs`                       | Thư mục lưu kết quả                               |
+|              | `web_stream`          | `false`                         | Bật/tắt phát luồng Web xem trên trình duyệt       |
+|              | `stream_port`         | `8080`                          | Cổng truy cập Web Stream (http://<IP_Pi>:8080)   |
+|              | `stream_quality`      | `80`                            | Chất lượng nén ảnh JPEG (1-100)                   |
 
 ---
 
