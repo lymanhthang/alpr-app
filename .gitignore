@@ -1,5 +1,6 @@
 # Thư mục dữ liệu kiểm tra và kết quả xuất ra
 test_data/
+test-data/
 outputs/
 data/
 *.db
@@ -16,3 +17,4 @@ venv/
 *.egg-info/
 .pytest_cache/
 
+test-data/
