@@ -11,6 +11,19 @@ detector:
   iou_threshold: 0.45
   imgsz: 640
 
+# Module phân loại 14 loại xe 2 bánh Việt Nam (YOLO NCNN)
+vehicle_classifier:
+  enabled: false # Bật qua CLI bằng --classify-vehicle hoặc đổi thành true
+  model_path: "models/vehicle_classify/384x640_fp16_ncnn_model"
+  conf_threshold: 0.35
+  iou_threshold: 0.45
+  imgsz: [384, 640]
+  skip_frames: 2 # Bỏ qua frame cho phân loại xe (chạy cùng nhịp với detector)
+  draw_box: true # Hiển thị bounding box thân xe kèm loại xe
+  strategy: "voting" # Chiến lược phân loại: "voting" (bỏ phiếu đa frame) hoặc "lock_first" (khóa loại xe ngay lần đầu)
+  lock_first_conf: 0.5 # Ngưỡng tin cậy để khóa ngay lần đầu khi dùng strategy "lock_first"
+
+
 # Module theo dõi đối tượng (ByteTrack qua supervision)
 tracker:
   track_activation_threshold: 0.3

@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const refreshBtn = document.getElementById('btn-refresh');
 
     const sourceSelect = document.getElementById('filter-source');
+    const vehicleInput = document.getElementById('filter-vehicle');
     const timeFromInput = document.getElementById('filter-time-from');
     const timeToInput = document.getElementById('filter-time-to');
     const fuzzyCheck = document.getElementById('check-fuzzy');
@@ -39,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const trajectoryCanvasWrapper = document.getElementById('trajectory-canvas-wrapper');
 
     const modalSourceName = document.getElementById('modal-source-name');
+    const modalVehicleType = document.getElementById('modal-vehicle-type');
     const modalStartTime = document.getElementById('modal-start-time');
     const modalEndTime = document.getElementById('modal-end-time');
     const modalConfValue = document.getElementById('modal-conf-value');
@@ -94,6 +96,11 @@ document.addEventListener('DOMContentLoaded', () => {
     correctedOnlyCheck.addEventListener('change', performSearch);
     fuzzyCheck.addEventListener('change', performSearch);
     sourceSelect.addEventListener('change', performSearch);
+    if (vehicleInput) {
+        vehicleInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') performSearch();
+        });
+    }
     timeFromInput.addEventListener('change', performSearch);
     timeToInput.addEventListener('change', performSearch);
 
@@ -152,6 +159,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         params.append('fuzzy', fuzzyCheck.checked ? 'true' : 'false');
         if (sourceSelect.value) params.append('source_id', sourceSelect.value);
+        if (vehicleInput && vehicleInput.value.trim()) {
+            params.append('vehicle_type', vehicleInput.value.trim());
+        }
 
         if (timeFromInput.value) {
             const tsFrom = new Date(timeFromInput.value).getTime() / 1000;
@@ -210,6 +220,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (item.is_corrected) {
             badgesHtml += '<span class="badge badge-corrected"><i class="fa-solid fa-wand-magic-sparkles"></i> Đã sửa</span>';
+        }
+        if (item.vehicle_type) {
+            badgesHtml += `<span class="badge" style="background: rgba(180, 80, 220, 0.2); color: #d070ff; border: 1px solid rgba(180, 80, 220, 0.4);"><i class="fa-solid fa-motorcycle"></i> ${escapeHtml(item.vehicle_type)}</span>`;
         }
         if (item.fuzzy_score && item.fuzzy_score < 100) {
             badgesHtml += `<span class="badge badge-fuzzy">Khớp ${Math.round(item.fuzzy_score)}%</span>`;
@@ -292,6 +305,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Metadata info
             modalSourceName.textContent = `${data.source_name} (${(data.source_kind || '').toUpperCase()})`;
+            if (modalVehicleType) {
+                modalVehicleType.textContent = data.vehicle_type ? `${data.vehicle_type} (${Math.round((data.vehicle_conf || 0) * 100)}%)` : 'Chưa phân loại';
+            }
             modalStartTime.textContent = formatTimestamp(data.t_start);
             modalEndTime.textContent = formatTimestamp(data.t_end);
             modalConfValue.textContent = `${Math.round((data.plate_conf || 0) * 100)}%`;

@@ -4,8 +4,21 @@ Cấu hình tập trung cho ứng dụng ALPR.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 import yaml
+
+
+@dataclass
+class VehicleClassifierConfig:
+    enabled: bool = False
+    model_path: str = "models/vehicle_classify/384x640_fp16_ncnn_model"
+    conf_threshold: float = 0.35
+    iou_threshold: float = 0.45
+    imgsz: Tuple[int, int] = (384, 640)
+    skip_frames: int = 3
+    draw_box: bool = True
+    strategy: str = "voting"  # "voting" (bỏ phiếu đa frame) hoặc "lock_first" (khóa loại xe ngay lần đầu)
+    lock_first_conf: float = 0.5  # Ngưỡng tin cậy tối thiểu để khóa ngay lần đầu
 
 
 @dataclass
@@ -89,6 +102,7 @@ class OutputConfig:
 class AppConfig:
     device: str = "cpu"
     detector: DetectorConfig = field(default_factory=DetectorConfig)
+    vehicle_classifier: VehicleClassifierConfig = field(default_factory=VehicleClassifierConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     ocr: OCRConfig = field(default_factory=OCRConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
@@ -107,12 +121,21 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
         data = yaml.safe_load(f) or {}
 
     det_data = data.get("detector", {})
+    vc_data = data.get("vehicle_classifier", {})
     tracker_data = data.get("tracker", {})
     ocr_data = data.get("ocr", {})
     storage_data = data.get("storage", {})
     clip_data = data.get("clip", {})
     api_data = data.get("api", {})
     out_data = data.get("output", {})
+
+    vc_imgsz_raw = vc_data.get("imgsz", [384, 640])
+    if isinstance(vc_imgsz_raw, list):
+        vc_imgsz = tuple(vc_imgsz_raw)
+    elif isinstance(vc_imgsz_raw, int):
+        vc_imgsz = (vc_imgsz_raw, vc_imgsz_raw)
+    else:
+        vc_imgsz = (384, 640)
 
     return AppConfig(
         device=data.get("device", "cpu"),
@@ -121,6 +144,17 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             conf_threshold=float(det_data.get("conf_threshold", 0.35)),
             iou_threshold=float(det_data.get("iou_threshold", 0.45)),
             imgsz=int(det_data.get("imgsz", 640)),
+        ),
+        vehicle_classifier=VehicleClassifierConfig(
+            enabled=bool(vc_data.get("enabled", False)),
+            model_path=str(vc_data.get("model_path", "models/vehicle_classify/384x640_fp16_ncnn_model")),
+            conf_threshold=float(vc_data.get("conf_threshold", 0.35)),
+            iou_threshold=float(vc_data.get("iou_threshold", 0.45)),
+            imgsz=vc_imgsz,
+            skip_frames=int(vc_data.get("skip_frames", tracker_data.get("skip_frames", 3))),
+            draw_box=bool(vc_data.get("draw_box", True)),
+            strategy=str(vc_data.get("strategy", "voting")),
+            lock_first_conf=float(vc_data.get("lock_first_conf", 0.5)),
         ),
         tracker=TrackerConfig(
             track_activation_threshold=float(tracker_data.get("track_activation_threshold", 0.3)),

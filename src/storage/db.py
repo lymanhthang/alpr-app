@@ -79,9 +79,20 @@ class DatabaseManager:
                     frame_w INTEGER,
                     frame_h INTEGER,
                     trajectory TEXT,
+                    vehicle_type TEXT,
+                    vehicle_conf REAL DEFAULT 0.0,
                     created_at REAL NOT NULL
                 );
             """)
+
+            # Tự động nâng cấp schema nếu database đã tồn tại từ các phiên bản trước (Migration an toàn)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(sightings);")
+            existing_cols = {row["name"] for row in cursor.fetchall()}
+            if "vehicle_type" not in existing_cols:
+                conn.execute("ALTER TABLE sightings ADD COLUMN vehicle_type TEXT DEFAULT NULL;")
+            if "vehicle_conf" not in existing_cols:
+                conn.execute("ALTER TABLE sightings ADD COLUMN vehicle_conf REAL DEFAULT 0.0;")
 
             # 3. Tạo các Index tối ưu hóa truy vấn tra cứu
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sightings_plate ON sightings(plate);")
@@ -89,6 +100,7 @@ class DatabaseManager:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sightings_source_time ON sightings(source_id, t_start);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sightings_is_corrected ON sightings(is_corrected);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sightings_is_valid ON sightings(is_valid);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_sightings_vehicle_type ON sightings(vehicle_type);")
 
     def get_or_create_source(self, name: str, kind: str = "video", uri: str = "") -> int:
         """Lấy id của source theo tên hoặc tạo mới nếu chưa tồn tại."""
@@ -107,6 +119,10 @@ class DatabaseManager:
 
     def insert_sighting(self, data: Dict[str, Any]) -> int:
         """Chèn một bản ghi lượt xe vào bảng sightings."""
+        payload = dict(data)
+        payload.setdefault("vehicle_type", None)
+        payload.setdefault("vehicle_conf", 0.0)
+
         with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -116,16 +132,16 @@ class DatabaseManager:
                     corrections_detail, plate_conf, is_valid, t_start, t_end,
                     video_pos_s, frame_start, frame_end, n_ocr, lock_reason,
                     lock_latency_s, best_crop_path, context_path, clip_path,
-                    frame_w, frame_h, trajectory, created_at
+                    frame_w, frame_h, trajectory, vehicle_type, vehicle_conf, created_at
                 ) VALUES (
                     :source_id, :track_id, :plate, :plate_raw, :is_corrected,
                     :corrections_detail, :plate_conf, :is_valid, :t_start, :t_end,
                     :video_pos_s, :frame_start, :frame_end, :n_ocr, :lock_reason,
                     :lock_latency_s, :best_crop_path, :context_path, :clip_path,
-                    :frame_w, :frame_h, :trajectory, :created_at
+                    :frame_w, :frame_h, :trajectory, :vehicle_type, :vehicle_conf, :created_at
                 )
                 """,
-                data,
+                payload,
             )
             return int(cursor.lastrowid)
 
@@ -148,6 +164,7 @@ class DatabaseManager:
     def query_sightings(
         self,
         plate: Optional[str] = None,
+        vehicle_type: Optional[str] = None,
         source_id: Optional[int] = None,
         time_from: Optional[float] = None,
         time_to: Optional[float] = None,
@@ -164,6 +181,10 @@ class DatabaseManager:
         if plate:
             conditions.append("s.plate LIKE ?")
             params.append(f"%{plate.strip().upper()}%")
+
+        if vehicle_type:
+            conditions.append("s.vehicle_type LIKE ?")
+            params.append(f"%{vehicle_type.strip().lower()}%")
 
         if source_id is not None:
             conditions.append("s.source_id = ?")
@@ -219,7 +240,7 @@ class DatabaseManager:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_stats(self) -> Dict[str, Any]:
-        """Thống kê tổng quan số lượng sightings, biển hợp lệ, biển unknown, số lượt hiệu chỉnh."""
+        """Thống kê tổng quan số lượng sightings, biển hợp lệ, biển unknown, số lượt hiệu chỉnh và xe đã phân loại."""
         with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -228,6 +249,7 @@ class DatabaseManager:
                     SUM(CASE WHEN is_valid = 1 THEN 1 ELSE 0 END) as total_valid,
                     SUM(CASE WHEN is_valid = 0 THEN 1 ELSE 0 END) as total_unknown,
                     SUM(CASE WHEN is_corrected = 1 THEN 1 ELSE 0 END) as total_corrected,
+                    SUM(CASE WHEN vehicle_type IS NOT NULL AND vehicle_type != '' THEN 1 ELSE 0 END) as total_classified,
                     COUNT(DISTINCT plate) as total_unique_plates
                 FROM sightings
             """)
@@ -237,6 +259,7 @@ class DatabaseManager:
                 "total_valid": row["total_valid"] or 0,
                 "total_unknown": row["total_unknown"] or 0,
                 "total_corrected": row["total_corrected"] or 0,
+                "total_classified": row["total_classified"] or 0,
                 "total_unique_plates": row["total_unique_plates"] or 0,
             }
 

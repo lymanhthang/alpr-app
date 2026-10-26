@@ -49,6 +49,8 @@ def test_db_source_and_sighting(temp_db):
         "frame_w": 1280,
         "frame_h": 720,
         "trajectory": "[]",
+        "vehicle_type": "honda-vision",
+        "vehicle_conf": 0.92,
         "created_at": time.time(),
     })
     assert s_id > 0
@@ -56,12 +58,19 @@ def test_db_source_and_sighting(temp_db):
     item = temp_db.get_sighting_by_id(s_id)
     assert item is not None
     assert item["plate"] == "30A12345"
+    assert item["vehicle_type"] == "honda-vision"
+    assert item["vehicle_conf"] == 0.92
     assert item["source_name"] == "Cam_Cong_Chinh"
 
     # Truy vấn lọc
     res = temp_db.query_sightings(plate="30A")
     assert len(res) == 1
     assert res[0]["id"] == s_id
+
+    # Truy vấn lọc theo vehicle_type
+    res_v = temp_db.query_sightings(vehicle_type="vision")
+    assert len(res_v) == 1
+    assert res_v[0]["vehicle_type"] == "honda-vision"
 
     # Thêm một sighting UNKNOWN (không hợp lệ)
     s_unk_id = temp_db.insert_sighting({

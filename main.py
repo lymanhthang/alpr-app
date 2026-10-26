@@ -102,6 +102,32 @@ def parse_args():
         help="Địa chỉ IP host phát luồng Web (mặc định: 0.0.0.0)",
     )
     parser.add_argument(
+        "--classify-vehicle",
+        "--vehicle-classify",
+        dest="classify_vehicle",
+        action="store_true",
+        help="Bật chức năng phát hiện và phân loại 14 loại xe 2 bánh Việt Nam (NCNN)",
+    )
+    parser.add_argument(
+        "--vehicle-model",
+        type=str,
+        default=None,
+        help="Đường dẫn thư mục mô hình phân loại xe NCNN (mặc định: models/vehicle_classify/384x640_fp16_ncnn_model)",
+    )
+    parser.add_argument(
+        "--vehicle-strategy",
+        type=str,
+        choices=["voting", "lock_first"],
+        default=None,
+        help="Chiến lược phân loại xe: 'voting' (bỏ phiếu đa frame) hoặc 'lock_first' (khóa loại xe ngay lần đầu)",
+    )
+    parser.add_argument(
+        "--no-draw-vehicle-box",
+        dest="no_draw_vehicle_box",
+        action="store_true",
+        help="Ẩn bounding box thân xe trên khung hình (chỉ hiển thị loại xe trên nhãn biển số)",
+    )
+    parser.add_argument(
         "--benchmark",
         action="store_true",
         help="Bật chế độ đo benchmark chi tiết (thời gian load model, plate detection, ocr, pipeline)",
@@ -325,6 +351,16 @@ def main():
         config.tracker.skip_frames = args.skip_frames
     if args.strategy is not None:
         config.ocr.strategy = args.strategy
+
+    # Ghi đè cấu hình phân loại xe
+    if args.classify_vehicle:
+        config.vehicle_classifier.enabled = True
+    if args.vehicle_model is not None:
+        config.vehicle_classifier.model_path = args.vehicle_model
+    if args.vehicle_strategy is not None:
+        config.vehicle_classifier.strategy = args.vehicle_strategy
+    if args.no_draw_vehicle_box:
+        config.vehicle_classifier.draw_box = False
 
     # Tùy chọn phát luồng web
     web_stream = args.web_stream or config.output.web_stream

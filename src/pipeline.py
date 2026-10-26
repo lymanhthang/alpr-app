@@ -18,6 +18,7 @@ from src.reliability.quality import calculate_crop_quality
 from src.reliability.track_state import FinalizedSighting, TrackStateManager
 from src.storage.writer import SightingWriter
 from src.tracker import PlateTracker
+from src.vehicle_classifier import VehicleClassifier, VehicleTracker
 from src.visualizer import Visualizer
 
 
@@ -51,6 +52,17 @@ class ALPRPipeline:
         self.ocr = PlateOCR(config.ocr)
         self.visualizer = Visualizer()
 
+        # Module phân loại loại xe 2 bánh (YOLO NCNN + ByteTrack)
+        self.vehicle_classifier: Optional[VehicleClassifier] = None
+        self.vehicle_tracker: Optional[VehicleTracker] = None
+        self.vc_times: List[float] = []
+        self.vehicle_active_tracks: List[Tuple[int, np.ndarray, float, int, str]] = []
+
+        if getattr(config, "vehicle_classifier", None) and config.vehicle_classifier.enabled:
+            print("[Pipeline] Kích hoạt module Phân Loại Xe 2 Bánh (YOLO NCNN)...")
+            self.vehicle_classifier = VehicleClassifier(config.vehicle_classifier)
+            self.vehicle_tracker = VehicleTracker(config.tracker)
+
         # 2. Khởi tạo module độ tin cậy và lưu trữ
         self.track_manager = TrackStateManager(config.tracker, config.ocr)
 
@@ -66,6 +78,8 @@ class ALPRPipeline:
         t_warmup = time.perf_counter()
         self.detector.warmup(imgsz=config.detector.imgsz)
         self.ocr.warmup()
+        if self.vehicle_classifier:
+            self.vehicle_classifier.warmup(imgsz=config.vehicle_classifier.imgsz)
         self.warmup_time_ms = (time.perf_counter() - t_warmup) * 1000
         print(f"[Pipeline] Warm-up hoàn tất trong {self.warmup_time_ms:.2f} ms.")
 
@@ -164,8 +178,21 @@ class ALPRPipeline:
             self.det_times.append(det_ms)
 
             active_tracks = self.tracker.update(xyxy, confidences, class_ids)
+
+            # Chạy phân loại xe nếu được kích hoạt
+            if self.vehicle_classifier and self.vehicle_tracker:
+                t_vc = time.perf_counter()
+                v_xyxy, v_confs, v_class_ids = self.vehicle_classifier.detect(frame)
+                vc_ms = (time.perf_counter() - t_vc) * 1000
+                self.vc_times.append(vc_ms)
+                self.vehicle_active_tracks = self.vehicle_tracker.update(
+                    v_xyxy, v_confs, v_class_ids,
+                    class_name_fn=self.vehicle_classifier.get_class_name,
+                )
         else:
             active_tracks = self.tracker.get_tracks_for_skipped_frame()
+            if self.vehicle_classifier and self.vehicle_tracker:
+                self.vehicle_active_tracks = self.vehicle_tracker.get_tracks_for_skipped_frame()
 
         active_track_ids: Set[int] = {t[0] for t in active_tracks}
         h, w = frame.shape[:2]
@@ -204,6 +231,43 @@ class ALPRPipeline:
                 )
                 crop_quality = quality_res.score
                 track_state.update_best_crop(plate_crop, crop_quality, frame_idx, full_frame=frame)
+
+            # Gán kết loại xe (Spatial Association: tâm biển số nằm trong thân xe hoặc IoU cao nhất)
+            if self.vehicle_classifier and self.vehicle_active_tracks:
+                best_match_area = float("inf")
+                best_match = None
+                pcx = (x1 + x2) / 2.0
+                pcy = (y1 + y2) / 2.0
+
+                for v_tid, v_box, v_conf, v_cls_id, v_cls_name in self.vehicle_active_tracks:
+                    vx1, vy1, vx2, vy2 = v_box
+                    if vx1 <= pcx <= vx2 and vy1 <= pcy <= vy2:
+                        v_area = (vx2 - vx1) * (vy2 - vy1)
+                        if v_area < best_match_area:
+                            best_match_area = v_area
+                            best_match = (v_cls_name, v_conf)
+
+                # Fallback nếu lệch tâm nhẹ: kiểm tra tỷ lệ giao nhau (Intersection / Plate Area)
+                if best_match is None:
+                    max_overlap = 0.0
+                    for v_tid, v_box, v_conf, v_cls_id, v_cls_name in self.vehicle_active_tracks:
+                        vx1, vy1, vx2, vy2 = v_box
+                        ix1, iy1 = max(x1, vx1), max(y1, vy1)
+                        ix2, iy2 = min(x2, vx2), min(y2, vy2)
+                        inter_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                        overlap_ratio = inter_area / max(1, bw * bh)
+                        if overlap_ratio > 0.35 and overlap_ratio > max_overlap:
+                            max_overlap = overlap_ratio
+                            best_match = (v_cls_name, v_conf)
+
+                if best_match:
+                    v_type, v_conf = best_match
+                    track_state.add_vehicle_observation(
+                        class_name=v_type,
+                        conf=v_conf,
+                        strategy=self.config.vehicle_classifier.strategy,
+                        lock_first_conf=self.config.vehicle_classifier.lock_first_conf,
+                    )
 
             # --- CHIẾN LƯỢC 1: BỎ PHIẾU ĐA FRAME (VOTING - MẶC ĐỊNH) ---
             if self.strategy == "voting":
@@ -304,12 +368,29 @@ class ALPRPipeline:
         for s in finished_sightings:
             self._handle_finished_sighting(s)
 
-        # 6. Vẽ thông tin trực quan lên khung hình
+        # 6. Chuẩn bị bảng tra loại xe cho từng plate track_id để hiển thị lên badge
+        vehicle_type_map: Dict[int, str] = {}
+        for tid in active_track_ids:
+            if tid in self.track_manager.tracks:
+                t_state = self.track_manager.tracks[tid]
+                v_type = t_state.locked_vehicle_type if t_state.is_vehicle_locked else t_state.latest_vehicle_type
+                if v_type:
+                    vehicle_type_map[tid] = v_type
+
+        # Vẽ thông tin trực quan lên khung hình
+        draw_v_box = (
+            self.config.vehicle_classifier.draw_box
+            if self.vehicle_classifier
+            else False
+        )
         annotated_frame = self.visualizer.draw(
             frame=frame,
             tracks=active_tracks,
             ocr_cache=self.ocr_cache,
             provisional_cache=self.provisional_cache,
+            vehicle_tracks=self.vehicle_active_tracks if self.vehicle_classifier else None,
+            vehicle_type_map=vehicle_type_map,
+            draw_vehicle_box=draw_v_box,
             fps=self.fps,
             ocr_calls=self.ocr_calls_count,
         )
@@ -398,6 +479,16 @@ class ALPRPipeline:
             print(f"       - Nhanh nhất / Chậm: {ocr_min:6.2f} ms / {ocr_max:6.2f} ms")
         else:
             print("   * Character OCR: Không có lần gọi OCR nào.")
+
+        if self.vc_times:
+            vc_avg = float(np.mean(self.vc_times))
+            vc_min = float(np.min(self.vc_times))
+            vc_max = float(np.max(self.vc_times))
+            vc_fps = 1000.0 / vc_avg if vc_avg > 0 else 0.0
+            print(f"   * Vehicle Classification (YOLO NCNN 14 Classes):")
+            print(f"       - Số lần chạy      : {len(self.vc_times)} lần")
+            print(f"       - Trung bình / lần : {vc_avg:6.2f} ms  (tương đương ~{vc_fps:.1f} FPS)")
+            print(f"       - Nhanh nhất / Chậm: {vc_min:6.2f} ms / {vc_max:6.2f} ms")
         print("-" * 65)
 
         print("3. HIỆU NĂNG TOÀN BỘ PIPELINE & ĐỘ TIN CẬY:")

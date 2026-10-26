@@ -138,6 +138,7 @@ def get_stats():
 @app.get("/api/search")
 def search_sightings(
     plate: Optional[str] = Query(None, description="Biển số cần tìm (hỗ trợ tìm kiếm mờ)"),
+    vehicle_type: Optional[str] = Query(None, description="Lọc theo loại xe (VD: honda-vision, honda-sh...)"),
     fuzzy: bool = Query(False, description="Bật tìm kiếm mờ với RapidFuzz"),
     min_score: float = Query(70.0, ge=0.0, le=100.0, description="Điểm tương đồng tối thiểu khi tìm mờ (0-100)"),
     source_id: Optional[int] = Query(None, description="Lọc theo ID nguồn camera/video"),
@@ -150,10 +151,10 @@ def search_sightings(
     offset: int = Query(0, ge=0),
 ):
     """
-    Tra cứu lịch sử xe theo biển số, khoảng thời gian và nguồn camera.
+    Tra cứu lịch sử xe theo biển số, loại xe, khoảng thời gian và nguồn camera.
     Hỗ trợ tìm kiếm mờ (Fuzzy Search) giúp tìm ra biển số ngay cả khi người dùng gõ nhầm hoặc OCR đọc sai ký tự.
     """
-    print(f"[API Search] plate='{plate}', fuzzy={fuzzy}, valid_only={valid_only}, unknown_only={unknown_only}, corrected_only={corrected_only}")
+    print(f"[API Search] plate='{plate}', vehicle_type='{vehicle_type}', fuzzy={fuzzy}, valid_only={valid_only}, unknown_only={unknown_only}, corrected_only={corrected_only}")
 
     # Trường hợp 1: Tìm kiếm mờ theo biển số
     if plate and fuzzy:
@@ -178,6 +179,7 @@ def search_sightings(
         for p_name, score in matched_plates:
             items = db.query_sightings(
                 plate=p_name,
+                vehicle_type=vehicle_type,
                 source_id=source_id,
                 time_from=time_from,
                 time_to=time_to,
@@ -199,6 +201,7 @@ def search_sightings(
     # Trường hợp 2: Truy vấn tiêu chuẩn qua SQL Index
     results = db.query_sightings(
         plate=plate,
+        vehicle_type=vehicle_type,
         source_id=source_id,
         time_from=time_from,
         time_to=time_to,

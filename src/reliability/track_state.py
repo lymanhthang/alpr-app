@@ -41,6 +41,8 @@ class FinalizedSighting:
     frame_h: int
     trajectory: List[Tuple[float, float, float, float, float]]  # [t_rel, norm_cx, norm_cy, norm_w, norm_h]
     clip_bytes: Optional[bytes] = None
+    vehicle_type: Optional[str] = None
+    vehicle_conf: float = 0.0
 
 
 class TrackState:
@@ -91,6 +93,14 @@ class TrackState:
         self.latest_plate: str = ""
         self.latest_is_valid: bool = False
 
+        # Phân loại loại xe (hỗ trợ voting và lock_first)
+        self.vehicle_observations: List[Tuple[str, float]] = []
+        self.is_vehicle_locked: bool = False
+        self.locked_vehicle_type: Optional[str] = None
+        self.locked_vehicle_conf: float = 0.0
+        self.latest_vehicle_type: Optional[str] = None
+        self.latest_vehicle_conf: float = 0.0
+
     def add_trajectory_point(
         self,
         bbox: np.ndarray,
@@ -135,6 +145,32 @@ class TrackState:
                 cw = 640
                 ch = int(fh * (cw / fw))
                 self.context_frame = cv2.resize(full_frame, (cw, ch), interpolation=cv2.INTER_AREA)
+
+    def add_vehicle_observation(
+        self,
+        class_name: str,
+        conf: float,
+        strategy: str = "voting",
+        lock_first_conf: float = 0.5,
+    ):
+        """
+        Ghi nhận quan sát phân loại xe với 2 chiến lược:
+        - 'voting': Tích lũy các lần nhận diện qua frame để biểu quyết tổng hợp.
+        - 'lock_first': Khóa ngay kết quả nếu độ tin cậy >= lock_first_conf.
+        """
+        self.latest_vehicle_type = class_name
+        self.latest_vehicle_conf = conf
+
+        if self.is_vehicle_locked:
+            return
+
+        if strategy == "lock_first" and conf >= lock_first_conf:
+            self.is_vehicle_locked = True
+            self.locked_vehicle_type = class_name
+            self.locked_vehicle_conf = conf
+            return
+
+        self.vehicle_observations.append((class_name, conf))
 
     def add_ocr_result(
         self,
@@ -225,6 +261,24 @@ class TrackState:
             final_valid = self.locked_is_valid
             lock_reason = self.lock_reason
 
+        # Xác định loại xe cuối cùng (Dựa trên lock_first hoặc weighted voting)
+        if self.is_vehicle_locked:
+            final_vehicle_type = self.locked_vehicle_type
+            final_vehicle_conf = self.locked_vehicle_conf
+        elif self.vehicle_observations:
+            v_scores: Dict[str, float] = {}
+            v_counts: Dict[str, int] = {}
+            for vtype, vconf in self.vehicle_observations:
+                v_scores[vtype] = v_scores.get(vtype, 0.0) + vconf
+                v_counts[vtype] = v_counts.get(vtype, 0) + 1
+
+            best_vtype = max(v_scores.keys(), key=lambda k: v_scores[k])
+            final_vehicle_type = best_vtype
+            final_vehicle_conf = round(v_scores[best_vtype] / v_counts[best_vtype], 2)
+        else:
+            final_vehicle_type = self.latest_vehicle_type
+            final_vehicle_conf = round(self.latest_vehicle_conf, 2)
+
         lock_latency_s = (
             max(0.0, self.t_end - self.t_start)
             if self.locked_at_frame < 0
@@ -252,6 +306,8 @@ class TrackState:
             frame_w=self.frame_w,
             frame_h=self.frame_h,
             trajectory=self.trajectory,
+            vehicle_type=final_vehicle_type,
+            vehicle_conf=final_vehicle_conf,
         )
 
 

@@ -147,6 +147,8 @@ class SightingWriter:
             "frame_w": int(sighting.frame_w),
             "frame_h": int(sighting.frame_h),
             "trajectory": json.dumps(sighting.trajectory),
+            "vehicle_type": sighting.vehicle_type,
+            "vehicle_conf": float(sighting.vehicle_conf or 0.0),
             "created_at": time.time(),
         }
 
