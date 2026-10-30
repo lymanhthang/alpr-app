@@ -27,6 +27,7 @@ class DetectorConfig:
     conf_threshold: float = 0.35
     iou_threshold: float = 0.45
     imgsz: int = 640
+    tracker_type: str = "bytetrack.yaml"
 
 
 @dataclass
@@ -35,6 +36,7 @@ class TrackerConfig:
     lost_track_buffer: int = 30
     minimum_matching_threshold: float = 0.8
     skip_frames: int = 3
+    tracker_type: str = "bytetrack.yaml"
 
 
 @dataclass
@@ -144,6 +146,7 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             conf_threshold=float(det_data.get("conf_threshold", 0.35)),
             iou_threshold=float(det_data.get("iou_threshold", 0.45)),
             imgsz=int(det_data.get("imgsz", 640)),
+            tracker_type=str(tracker_data.get("tracker_type", det_data.get("tracker_type", "bytetrack.yaml"))),
         ),
         vehicle_classifier=VehicleClassifierConfig(
             enabled=bool(vc_data.get("enabled", False)),
@@ -161,6 +164,7 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             lost_track_buffer=int(tracker_data.get("lost_track_buffer", 30)),
             minimum_matching_threshold=float(tracker_data.get("minimum_matching_threshold", 0.8)),
             skip_frames=int(tracker_data.get("skip_frames", 3)),
+            tracker_type=str(tracker_data.get("tracker_type", "bytetrack.yaml")),
         ),
         ocr=OCRConfig(
             engine=ocr_data.get("engine", "onnxruntime"),

@@ -7,8 +7,8 @@ device: "cpu"
 # Module phát hiện biển số (YOLO NCNN)
 detector:
   model_path: "models/lp_det/384x640_fp16_ncnn_model"
-  conf_threshold: 0.35
-  iou_threshold: 0.45
+  conf_threshold: 0.1
+  iou_threshold: 0.1
   imgsz: 640
 
 # Module phân loại 14 loại xe 2 bánh Việt Nam (YOLO NCNN)
@@ -23,13 +23,13 @@ vehicle_classifier:
   strategy: "voting" # Chiến lược phân loại: "voting" (bỏ phiếu đa frame) hoặc "lock_first" (khóa loại xe ngay lần đầu)
   lock_first_conf: 0.5 # Ngưỡng tin cậy để khóa ngay lần đầu khi dùng strategy "lock_first"
 
-
-# Module theo dõi đối tượng (ByteTrack qua supervision)
+# Module theo dõi đối tượng (ByteTrack qua Ultralytics YOLO / supervision)
 tracker:
   track_activation_threshold: 0.3
   lost_track_buffer: 30
   minimum_matching_threshold: 0.8
-  skip_frames: 2 # Chạy YOLO mỗi 3 frames (1, 4, 7...) để tối ưu FPS trên Pi 5
+  skip_frames: 0 # Số frame bỏ qua giữa các lần chạy YOLO (0: xử lý mọi frame không bỏ qua; 2: bỏ qua 2 frame, chạy mỗi 3 frames)
+  tracker_type: "bytetrack.yaml" # Thuật toán tracking Ultralytics: "bytetrack.yaml" hoặc "botsort.yaml"
 
 # Module nhận diện ký tự & Nâng cao độ tin cậy
 ocr:
@@ -41,7 +41,7 @@ ocr:
   rec_model_dir: "models/ch_rec"
   use_angle_cls: false
   min_confidence: 0.5
-  retry_interval_frames: 2 # Bỏ qua 2 frame tiếp theo giữa các lần thử nếu chưa đạt chuẩn VN
+  retry_interval_frames: 1 # Bỏ qua 1 frame tiếp theo giữa các lần thử nếu chưa đạt chuẩn VN
 
   # Chiến lược độ tin cậy
   strategy: "voting" # "voting" (bỏ phiếu đa frame) hoặc "lock_first" (khóa ngay lần đầu)

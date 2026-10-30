@@ -67,9 +67,10 @@ def parse_args():
     )
     parser.add_argument(
         "--skip-frames",
+        "--skip-frame",
         type=int,
         default=None,
-        help="Ghi đè số frame bỏ qua giữa các lần chạy YOLO (VD: 3)",
+        help="Ghi đè số frame bỏ qua giữa các lần chạy YOLO (VD: 0 = không bỏ qua frame nào, 2 = bỏ qua 2 frame)",
     )
     parser.add_argument(
         "--output",
@@ -278,7 +279,7 @@ def process_video_or_camera(
                 break
 
             annotated_frame, active_tracks, ocr_cache = pipeline.process_frame(
-                frame, frame_idx=frame_idx, is_live=is_live
+                frame, frame_idx=frame_idx, is_live=is_live, is_image=False
             )
 
             # Bắn khung hình đã vẽ thông tin tới máy chủ Web Streamer
@@ -348,7 +349,8 @@ def main():
 
     # Ghi đè cấu hình từ CLI
     if args.skip_frames is not None:
-        config.tracker.skip_frames = args.skip_frames
+        config.tracker.skip_frames = max(0, args.skip_frames)
+        config.vehicle_classifier.skip_frames = max(0, args.skip_frames)
     if args.strategy is not None:
         config.ocr.strategy = args.strategy
 

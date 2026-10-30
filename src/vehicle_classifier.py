@@ -73,6 +73,10 @@ class VehicleClassifier:
             f"hỗ trợ {len(self.class_names)} lớp xe."
         )
 
+        # Bộ nhớ lưu vết track phục vụ video/stream và skip-frame
+        self.last_active_tracks: List[Tuple[int, np.ndarray, float, int, str]] = []
+        self._next_fallback_id: int = 1
+
     def detect(self, frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Dự đoán vị trí và loại xe trên frame ảnh.
@@ -111,6 +115,84 @@ class VehicleClassifier:
         )
 
         return xyxy, confidences, class_ids
+
+    def track(
+        self,
+        frame: np.ndarray,
+        persist: bool = True,
+        tracker: Optional[str] = None,
+    ) -> List[Tuple[int, np.ndarray, float, int, str]]:
+        """
+        Theo dõi vị trí và nhận dạng loại xe trên Video / Camera Stream sử dụng model.track() của Ultralytics YOLO.
+
+        Returns:
+            Danh sách các tuple: (track_id, xyxy_bbox, confidence, class_id, class_name)
+        """
+        tracker_name = tracker or "bytetrack.yaml"
+
+        try:
+            results = self.model.track(
+                frame,
+                persist=persist,
+                conf=self.config.conf_threshold,
+                iou=self.config.iou_threshold,
+                imgsz=self.config.imgsz,
+                tracker=tracker_name,
+                verbose=False,
+            )
+        except Exception as e:
+            print(f"[VehicleClassifier Track Warning] model.track lỗi ({e}), chuyển sang fallback detect.")
+            xyxy, confidences, class_ids = self.detect(frame)
+            active_tracks = [
+                (self._next_fallback_id + i, box, float(conf), int(cls_id), self.get_class_name(cls_id))
+                for i, (box, conf, cls_id) in enumerate(zip(xyxy, confidences, class_ids))
+            ]
+            self._next_fallback_id += len(xyxy)
+            self.last_active_tracks = active_tracks
+            return active_tracks
+
+        active_tracks: List[Tuple[int, np.ndarray, float, int, str]] = []
+        if not results or len(results) == 0 or len(results[0].boxes) == 0:
+            self.last_active_tracks = []
+            return active_tracks
+
+        boxes = results[0].boxes
+        xyxy = boxes.xyxy.cpu().numpy()
+        confidences = (
+            boxes.conf.cpu().numpy()
+            if boxes.conf is not None
+            else np.ones(len(xyxy), dtype=np.float32)
+        )
+        class_ids = (
+            boxes.cls.cpu().numpy().astype(int)
+            if boxes.cls is not None
+            else np.zeros(len(xyxy), dtype=int)
+        )
+
+        if boxes.id is not None:
+            track_ids = boxes.id.cpu().numpy().astype(int).tolist()
+        else:
+            track_ids = [self._next_fallback_id + i for i in range(len(xyxy))]
+            self._next_fallback_id += len(xyxy)
+
+        for tid, box, conf, cls_id in zip(track_ids, xyxy, confidences, class_ids):
+            cls_name = self.get_class_name(cls_id)
+            active_tracks.append((int(tid), box, float(conf), int(cls_id), cls_name))
+
+        self.last_active_tracks = active_tracks
+        return active_tracks
+
+    def get_tracks_for_skipped_frame(self) -> List[Tuple[int, np.ndarray, float, int, str]]:
+        """Trả về danh sách track xe ở frame bị skip (giữ nguyên vị trí track gần nhất)."""
+        return list(self.last_active_tracks)
+
+    def reset(self):
+        """Đặt lại bộ theo dõi xe cho luồng video/stream mới."""
+        self.last_active_tracks = []
+        self._next_fallback_id = 1
+        if hasattr(self.model, "predictor") and self.model.predictor is not None:
+            if hasattr(self.model.predictor, "trackers"):
+                self.model.predictor.trackers = None
 
     def get_class_name(self, class_id: int) -> str:
         """Lấy tên định danh lớp xe từ class_id."""

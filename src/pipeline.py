@@ -48,20 +48,20 @@ class ALPRPipeline:
 
         # 1. Khởi tạo các module thị giác
         self.detector = PlateDetector(config.detector)
-        self.tracker = PlateTracker(config.tracker)
+        self.tracker = self.detector  # Trỏ tracker vào detector để giữ tương thích ngược
         self.ocr = PlateOCR(config.ocr)
         self.visualizer = Visualizer()
 
-        # Module phân loại loại xe 2 bánh (YOLO NCNN + ByteTrack)
+        # Module phân loại loại xe 2 bánh (YOLO NCNN)
         self.vehicle_classifier: Optional[VehicleClassifier] = None
-        self.vehicle_tracker: Optional[VehicleTracker] = None
+        self.vehicle_tracker: Optional[Any] = None
         self.vc_times: List[float] = []
         self.vehicle_active_tracks: List[Tuple[int, np.ndarray, float, int, str]] = []
 
         if getattr(config, "vehicle_classifier", None) and config.vehicle_classifier.enabled:
             print("[Pipeline] Kích hoạt module Phân Loại Xe 2 Bánh (YOLO NCNN)...")
             self.vehicle_classifier = VehicleClassifier(config.vehicle_classifier)
-            self.vehicle_tracker = VehicleTracker(config.tracker)
+            self.vehicle_tracker = self.vehicle_classifier
 
         # 2. Khởi tạo module độ tin cậy và lưu trữ
         self.track_manager = TrackStateManager(config.tracker, config.ocr)
@@ -87,7 +87,8 @@ class ALPRPipeline:
         self.ocr_cache: Dict[int, str] = {}           # {track_id: plate_text} đã chốt
         self.provisional_cache: Dict[int, str] = {}   # {track_id: plate_text} tạm thời (đang voting)
         self.ocr_calls_count: int = 0
-        self.skip_frames: int = max(1, config.tracker.skip_frames)
+        self.skip_frames: int = max(0, config.tracker.skip_frames)
+        self.detect_interval: int = self.skip_frames + 1
         self.lock_first_last_frame: Dict[int, int] = {}  # Hỗ trợ riêng cho lock_first
 
         # 5. Thống kê benchmark
@@ -105,7 +106,10 @@ class ALPRPipeline:
         self._fps_window: List[float] = []   # danh sách các dt gần nhất (giây)
         self._FPS_WINDOW_SIZE: int = 30      # độ dài cửa sổ
 
-        print(f"[Pipeline] Sẵn sàng. Tỷ lệ Skip-frame: mỗi {self.skip_frames} frame.")
+        if self.skip_frames == 0:
+            print("[Pipeline] Sẵn sàng. Chế độ Skip-frame: TẮT (xử lý detector trên 100% khung hình).")
+        else:
+            print(f"[Pipeline] Sẵn sàng. Tỷ lệ Skip-frame: bỏ qua {self.skip_frames} frame (chạy detector mỗi {self.detect_interval} frame).")
         if self.benchmark:
             print("[Pipeline] Chế độ Benchmark CHI TIẾT: ĐÃ BẬT.")
         print("=" * 50 + "\n")
@@ -115,6 +119,7 @@ class ALPRPipeline:
         frame: np.ndarray,
         frame_idx: int = 0,
         is_live: bool = False,
+        is_image: bool = False,
     ) -> Tuple[np.ndarray, List[Tuple[int, np.ndarray, float]], Dict[int, str]]:
         """
         Xử lý 1 khung hình qua toàn bộ pipeline.
@@ -123,6 +128,7 @@ class ALPRPipeline:
             frame: Ảnh BGR.
             frame_idx: Chỉ số frame hiện tại.
             is_live: True nếu nguồn là webcam/camera thời gian thực.
+            is_image: True nếu nguồn là ảnh tĩnh (dùng detect()), False nếu là video/stream (dùng track()).
 
         Returns:
             Tuple gồm:
@@ -168,31 +174,49 @@ class ALPRPipeline:
         if self.clip_buffer.enabled:
             self.clip_buffer.add_frame(frame, curr_time)
 
-        # 3. Chạy Detector (YOLO) hoặc tái sử dụng từ Tracker (Skip-frame)
-        is_detection_frame = (frame_idx % self.skip_frames == 0)
-
-        if is_detection_frame:
+        # 3. Chạy Detector / Tracker (YOLO) hoặc tái sử dụng từ Tracker (Skip-frame)
+        if is_image:
+            # ẢNH TĨNH: Sử dụng phương thức detect() trực tiếp của YOLO
             t_det = time.perf_counter()
             xyxy, confidences, class_ids = self.detector.detect(frame)
             det_ms = (time.perf_counter() - t_det) * 1000
             self.det_times.append(det_ms)
 
-            active_tracks = self.tracker.update(xyxy, confidences, class_ids)
+            active_tracks = [
+                (i + 1, box, float(conf))
+                for i, (box, conf) in enumerate(zip(xyxy, confidences))
+            ]
 
-            # Chạy phân loại xe nếu được kích hoạt
-            if self.vehicle_classifier and self.vehicle_tracker:
+            if self.vehicle_classifier:
                 t_vc = time.perf_counter()
                 v_xyxy, v_confs, v_class_ids = self.vehicle_classifier.detect(frame)
                 vc_ms = (time.perf_counter() - t_vc) * 1000
                 self.vc_times.append(vc_ms)
-                self.vehicle_active_tracks = self.vehicle_tracker.update(
-                    v_xyxy, v_confs, v_class_ids,
-                    class_name_fn=self.vehicle_classifier.get_class_name,
-                )
+                self.vehicle_active_tracks = [
+                    (i + 1, box, float(conf), int(cls_id), self.vehicle_classifier.get_class_name(cls_id))
+                    for i, (box, conf, cls_id) in enumerate(zip(v_xyxy, v_confs, v_class_ids))
+                ]
+            is_detection_frame = True
         else:
-            active_tracks = self.tracker.get_tracks_for_skipped_frame()
-            if self.vehicle_classifier and self.vehicle_tracker:
-                self.vehicle_active_tracks = self.vehicle_tracker.get_tracks_for_skipped_frame()
+            # VIDEO / STREAM: Sử dụng phương thức track() với model.track() của Ultralytics YOLO
+            is_detection_frame = (self.skip_frames == 0) or (frame_idx % self.detect_interval == 0)
+
+            if is_detection_frame:
+                t_det = time.perf_counter()
+                active_tracks = self.detector.track(frame, persist=True)
+                det_ms = (time.perf_counter() - t_det) * 1000
+                self.det_times.append(det_ms)
+
+                if self.vehicle_classifier:
+                    t_vc = time.perf_counter()
+                    self.vehicle_active_tracks = self.vehicle_classifier.track(frame, persist=True)
+                    vc_ms = (time.perf_counter() - t_vc) * 1000
+                    self.vc_times.append(vc_ms)
+            else:
+                # Frame bị skip: lấy lại các track từ detector đã lưu
+                active_tracks = self.detector.get_tracks_for_skipped_frame()
+                if self.vehicle_classifier:
+                    self.vehicle_active_tracks = self.vehicle_classifier.get_tracks_for_skipped_frame()
 
         active_track_ids: Set[int] = {t[0] for t in active_tracks}
         h, w = frame.shape[:2]
@@ -425,7 +449,7 @@ class ALPRPipeline:
         if img is None:
             raise FileNotFoundError(f"Không thể đọc file ảnh: {image_path}")
 
-        annotated_img, _, _ = self.process_frame(img, frame_idx=0)
+        annotated_img, _, _ = self.process_frame(img, frame_idx=0, is_image=True)
         self.finish()
         return annotated_img
 
@@ -435,6 +459,10 @@ class ALPRPipeline:
         remaining_sightings = self.track_manager.flush_all()
         for s in remaining_sightings:
             self._handle_finished_sighting(s)
+
+        self.detector.reset()
+        if self.vehicle_classifier:
+            self.vehicle_classifier.reset()
 
         self.storage_writer.close(timeout=5.0)
         print("[Pipeline] Toàn bộ dữ liệu đã được lưu trữ an toàn.")
